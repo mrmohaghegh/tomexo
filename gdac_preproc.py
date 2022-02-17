@@ -8,10 +8,10 @@ import os
 filter_silents = True
 hm_coeff = 0.02 # Threshold of mutation rate of genes to be considered
 
-input_dir = 'data/gdac.broadinstitute.org_GBM.Mutation_Packager_Calls.Level_3.2016012800.0.0'
-df_full_dir = 'data/processed/gdac_firehose_gbm_full.csv' # can be set to None
-intogen_genes_dir = 'IntOGen/IntOGen-DriverGenes_GBM_TCGA.tsv'
-df_filtered_dir = 'HMIntogen/gdac_firehose_GBM.csv'
+input_dir = 'gdac.broadinstitute.org_GBM.Mutation_Packager_Calls.Level_3.2016012800.0.0'
+df_full_dir = 'gdac_firehose_gbm_full.csv' # can be set to None
+intogen_genes_dir = 'IntOGen-DriverGenes_GBM_TCGA.tsv'
+df_filtered_dir = 'gdac_firehose_GBM.csv'
 
 # ----------------------------------------- #
 # ------- Builing the full DataFrame ------ #
@@ -34,7 +34,7 @@ df_full = df_full.fillna(False).astype(int)
 df_full = df_full.sort_index(axis='index')
 df_full = df_full.sort_index(axis='columns')
 if df_full_dir is not None:
-    df_full.to_csv(output_file)
+    df_full.to_csv(df_full_dir)
 
 # ----------------------------------------- #
 # -------------- Filtering ---------------- #

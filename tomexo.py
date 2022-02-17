@@ -50,10 +50,9 @@ def run_race(args):
         n_iters=n2,
         seed=seed,
         current_posterior=current_posterior
-        )
-    )
+        ))
 
-def fit_oncotree(dataset, print_running_status=True, include_linear_initializations=False):
+def fit_oncotree(dataset, print_running_status=False, include_linear_initializations=False):
     st = time.time()
     if include_linear_initializations:
         coeffs = [-1]
@@ -110,7 +109,7 @@ parser.add_argument('-i', '--input', help='input csv file')
 parser.add_argument('-o', '--output', help='output directory')
 parser.add_argument('--n_chains', help='number of chains', default=10, type=int)
 parser.add_argument('--n_mixing', help='number of chain mixing events', default=0, type=int)
-parser.add_argument('--n_samples', help='number of samples between mixing events', default=100000, type=int)
+parser.add_argument('--n_samples', help='number of samples between mixing events', default=10000, type=int)
 
 args = parser.parse_args()
 
