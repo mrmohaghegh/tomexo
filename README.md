@@ -24,3 +24,10 @@ Use gdac_preproc.py to prepare the input csv file for the algorithm.
 $ python tomexo.py -i input.csv -o output --n_chains 10 --n_mixing 5 --n_samples 100
 ```
 
+* n_chains default is 10
+* n_mixing default is 0
+* n_samples default is 100000
+
+### Perprocessing
+
+The script in gdac_postproc.py performs a basic postprocessing and generates a pdf file of the final progression model.
