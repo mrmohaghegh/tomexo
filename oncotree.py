@@ -338,8 +338,12 @@ class OncoTree():
             n_errors += w_1[self.root] + np.array([np.sum(dataset[tumor_idx, self.ps.genes]), 0])
         n_ones = np.sum(dataset)
         n_zeros = np.size(dataset)-n_ones
-        epsilon_hat = n_errors[0]/(n_zeros-n_errors[1]+n_errors[0]) + constant_to_be_added
-        delta_hat = n_errors[1]/(n_ones-n_errors[0]+n_errors[1]) + constant_to_be_added
+        epsilon_hat = constant_to_be_added
+        if n_errors[0] > 0:
+            epsilon_hat += n_errors[0]/(n_zeros-n_errors[1]+n_errors[0])
+        delta_hat = constant_to_be_added
+        if n_errors[1] > 0:
+            delta_hat += n_errors[1]/(n_ones-n_errors[0]+n_errors[1])
         e_hat = (n_errors[0]+n_errors[1])/(n_ones+n_zeros) + constant_to_be_added
         if epsilon_hat > 0.5 or delta_hat > 0.5:
             epsilon_hat = 0.5
