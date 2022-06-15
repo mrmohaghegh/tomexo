@@ -1,17 +1,18 @@
 #! /usr/bin/env python3
 
+# Constructed for public repository on GITHUB
+
 import numpy as np
 import pandas as pd
 import os
 
-
 filter_silents = True
-hm_coeff = 0.02 # Threshold of mutation rate of genes to be considered
+hm_coeff = 0.00 # Threshold of mutation rate of genes to be considered
 
-input_dir = 'gdac.broadinstitute.org_GBM.Mutation_Packager_Calls.Level_3.2016012800.0.0'
-df_full_dir = 'gdac_firehose_gbm_full.csv' # can be set to None
-intogen_genes_dir = 'IntOGen-DriverGenes_GBM_TCGA.tsv'
-df_filtered_dir = 'gdac_firehose_GBM.csv'
+input_dir = 'data/raw/gdac.broadinstitute.org_SKCM.Mutation_Packager_Calls.Level_3.2016012800.0.0'
+df_full_dir = 'data/full/gdac_firehose_skcm_full.csv' # can be set to None
+intogen_genes_dir = 'data/preprocessing/IntOGen/IntOGen-DriverGenes_SKCM_TCGA.tsv'
+df_filtered_dir = 'data/AllIntogen/gdac_firehose_SKCM.csv'
 
 # ----------------------------------------- #
 # ------- Builing the full DataFrame ------ #
@@ -25,7 +26,11 @@ n_patients = len(files_list)
 df_full = pd.DataFrame()
 for i, file_name in enumerate(files_list):
     file_address = os.path.join(input_dir, file_name)
-    df_input = pd.read_csv(file_address, sep='\t', comment='#')
+    try:
+        df_input = pd.read_csv(file_address, sep='\t', comment='#')
+    except:
+        print('Skipping %s: could not open it with pandas.read_csv' %file_name)
+        continue
     if filter_silents:
         df_input = df_input[~df_input.Variant_Classification.isin(['Silent', 'RNA'])]
     for index, row in df_input.iterrows():
@@ -34,7 +39,8 @@ df_full = df_full.fillna(False).astype(int)
 df_full = df_full.sort_index(axis='index')
 df_full = df_full.sort_index(axis='columns')
 if df_full_dir is not None:
-    df_full.to_csv(df_full_dir)
+    with open(df_full_dir, 'w') as f:          
+        df_full.to_csv(f, sep=',')
 
 # ----------------------------------------- #
 # -------------- Filtering ---------------- #
@@ -50,7 +56,7 @@ for gene in intogen_genes_list:
         intogen_list.append(gene_names.index(gene))
 intogen_list = np.array(intogen_list)
 # finding highly mutated genes:
-th_hm = 0.02*n_tumors
+th_hm = hm_coeff*n_tumors
 hm_list = np.where(df_full.sum()>=th_hm)[0]
 # Constucting the list of genes based on the filters:
 genes_to_keep = np.intersect1d(intogen_list, hm_list)

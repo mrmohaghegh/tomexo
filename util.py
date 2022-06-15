@@ -7,6 +7,10 @@ import os
 from scipy.special import logsumexp
 import matplotlib.pyplot as plt
 
+####### ------------------------------------------- #######
+####### ----- Main functions, frequently used ----- #######
+####### ------------------------------------------- #######
+
 def save_result(file_path, obj):
     sfp = file_path.split('/')
     adrs = '.'
@@ -36,200 +40,121 @@ def log_nCr(n, m):
         result = result + np.log(n-i) - np.log(m-i)
     return(result)
 
-def ME_test(node, dataset, gene_names):
-    # Outputs:
-    #       df:         rows are pairs of genes,
-    #                   first column is the freq. of mut. in gene1
-    #                   second column is the freq. of mut. in gene2
-    #                   third column is the freq. of mut. in both genes
-    #                   forth column is log_p_value of the obs. if the genes are not correlated
-    #       ME_score:   Averaged ME_score ( ME = f(1&2)/(f(1)*f(2)) )
-    #       avg_p:      Mean of the p_values
+def perfect_ME(node, dataset):
+
+    # Returns True if the node does not violate ME
+    n = len(node.genes)
+    ME = True
+    if n>1:
+        for _idx1 in range(n-1):
+            for _idx2 in range(_idx1+1, n):
+                if np.sum(dataset[:,node.genes[_idx1]]*dataset[:,node.genes[_idx2]])>0:
+                    ME = False
+    return(ME)
+
+def perfect_PR(node, dataset):
+
+    # Returns True if the node does not violate PR
+    PR = True
+    if not(node.is_root) and not(node.is_ps):
+        if not(node.parent.is_root):
+            mutated_in_node = np.sum(dataset[:,node.genes], axis=1)>0
+            mutated_in_parent = np.sum(dataset[:,node.parent.genes], axis=1)>0
+            mutated_only_in_node = mutated_in_node * (1-mutated_in_parent)
+            if np.sum(mutated_only_in_node)>0:
+                PR = False
+    return(PR)
+
+def ME_test(node, dataset):
+
+    # Averaged over pairs of genes (X,Y):
+    # Assuming n_X >= n_Y, we go over the tumors with mutated Y and calculate
+    # the ratio A/B, where:
+    # A:    probability of this many or FEWER mutations in X under Null hypothesis
+    # B:    probability of this many or MORE mutations in X under Null hypothesis
     n = len(node.genes)
     n_tumors = dataset.shape[0]
-    mut_freqs = []
     if n > 1:
-        df_indices=[]
+        mi_log_p_values = []
+        me_log_p_values = []
         for _idx1 in range(n-1):
             for _idx2 in range(_idx1+1, n):
                 pair = [node.genes[_idx1], node.genes[_idx2]]
-                n_1 = np.sum(dataset[:,pair[0]])
+                n_1, n_2 = np.sort([np.sum(dataset[:,pair[0]]),np.sum(dataset[:,pair[1]])])
                 f_1 = n_1/n_tumors
-                n_2 = np.sum(dataset[:,pair[1]])
                 f_2 = n_2/n_tumors
                 n_p = np.sum(dataset[:,pair[0]]*dataset[:,pair[1]])
                 f_p = n_p/n_tumors
-                log_p_i = np.zeros(n_p+1)
-                if f_1*f_2 == 0:
-                    log_p = 0
+                if n_1 == 0: # n_1 is the smaller number
+                    me_log_p = 0 # set the p_value to 1
+                    mi_log_p = 0
                 else:
-                    if n_1 <= n_2:
-                        for i in range(n_p+1):
-                            log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
-                    else:
-                        for i in range(n_p+1):
-                            log_p_i[i] = log_nCr(n_2, i)+(i*np.log(f_1))+((n_2-i)*np.log(1-f_1))
-                    log_p = logsumexp(log_p_i)
-                mut_freqs.append([f_1, f_2, f_p, log_p])
-                df_indices.append('{}, {}'.format(gene_names[pair[0]], gene_names[pair[1]]))
-        df = pd.DataFrame(
-            data=mut_freqs,
-            columns=[
-                'Gene1_Mut_Freq',
-                'Gene2_Mut_Freq',
-                'Sim_Mut_Freq',
-                'Log_p_value'
-                ],
-            index=df_indices)
-        ME_scores = []
-        for i in mut_freqs:
-            if i[1]*i[0]>0:
-                ME_scores.append(i[2]/(i[1]*i[0]))
-        if len(ME_scores)>0:
-            ME_score = np.mean(ME_scores)
-        else:
-            ME_score = 0
-        mut_freqs = np.array(mut_freqs)
-        avg_p = np.mean(np.exp(mut_freqs[:,3]))
-        return(df, ME_score, avg_p)
+                    log_p_i = np.zeros(n_1+1)
+                    for i in range(n_1+1):
+                        log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
+                    me_log_p = logsumexp(log_p_i[:n_p+1])
+                    mi_log_p = logsumexp(log_p_i[n_p:])
+                me_log_p_values.append(me_log_p)
+                mi_log_p_values.append(mi_log_p)
+        ME_score = np.mean(np.exp(me_log_p_values))/np.mean(np.exp(mi_log_p_values))
+        ME_p = np.mean(np.exp(me_log_p_values))
+        return(ME_score, ME_p)
     else:
         return()
 
-def PR_test(node, dataset, gene_names=None):
-    # PR_score should be smaller than 1, ideally 0
+def PR_test(node, dataset):
+    # the ratio A/B, where: (note that it's NOT in log-scale)
+    # A:    probability of this many or FEWER mutations in the tumors with
+    #       healthy parents under Null hypothesis
+    # B:    probability of this many or MORE mutations in the tumors with
+    #       healthy parents under Null hypothesis
     n_tumors = dataset.shape[0]
     mutated_in_node = np.sum(dataset[:,node.genes], axis=1)>0
     mutated_in_parent = np.sum(dataset[:,node.parent.genes], axis=1)>0
     mutated_only_in_node = mutated_in_node * (1-mutated_in_parent)
-    
+    mutated_only_in_parent = (1-mutated_in_node) * (mutated_in_parent)
+
     n_parent = np.sum(mutated_in_parent)
     n_node = np.sum(mutated_in_node)
-    if n_parent == n_tumors:
-        return(None)
-    elif n_node == 0:
-        return(1, 0)
-    else:
-        n_only_node = np.sum(mutated_only_in_node)
-        PR_score = (n_tumors*n_only_node)/(n_node*(n_tumors-n_parent))
-        if PR_score<1:
-            # Calculating P-value:
-            p = n_node/n_tumors
-            m = n_tumors-n_parent
-            log_p_i = np.zeros(n_only_node+1)
-            for i in range(n_only_node+1):
-                log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
-            log_p = logsumexp(log_p_i)
-        else:
-            log_p = 0
-        return(PR_score, np.exp(log_p))
+    n_only_node = np.sum(mutated_only_in_node)
+    n_only_parent = np.sum(mutated_only_in_parent)
 
-def SR_analysis(node, dataset, gene_names, log_p_th = 0):
-    # Analysis of possible dependencies among the children of a node
-    ME_rep = []
-    MI_rep = []
-    n_tumors = dataset.shape[0]
-    n_children = len(node.children)
-    for i in range(n_children):
-        node1 = node.children[i]
-        mutated_in_node1 = np.sum(dataset[:,node1.genes], axis=1)>0
-        n_1 = np.sum(mutated_in_node1)
-        f_1 = n_1/n_tumors
-        for j in range(i+1, n_children):
-            node2 = node.children[j]
-            mutated_in_node2 = np.sum(dataset[:,node2.genes], axis=1)>0
-            n_2 = np.sum(mutated_in_node2)
-            f_2 = n_2/n_tumors
-            mutated_in_both = mutated_in_node1 * mutated_in_node2
-            n_p = np.sum(mutated_in_both)
-            f_p = n_p/n_tumors
-            if f_p <= f_1*f_2:
-                # There is a chance of mutual exclusivity
-                log_p_i = np.zeros(n_p+1)
-                if n_1 <= n_2:
-                    for i in range(n_p+1):
-                        log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
-                else:
-                    for i in range(n_p+1):
-                        log_p_i[i] = log_nCr(n_2, i)+(i*np.log(f_1))+((n_2-i)*np.log(1-f_1))
-                log_p = logsumexp(log_p_i)
-                if log_p <= log_p_th:
-                    print('Significant Mutual Exclusivity found, with log_p %.3f'%log_p)
-                    ME_rep.append({
-                        'node1': ','.join(gene_names[_i] for _i in node1.genes),
-                        'node2': ','.join(gene_names[_i] for _i in node2.genes),
-                        'f_1': f_1,
-                        'f_2': f_2,
-                        'f_p': f_p,
-                        'log_p': log_p
-                        })
-            else:
-                # There is a chance of mutual inclusivity
-                log_p_i = []
-                if n_1 <= n_2:
-                    for i in range(n_p, n_1+1):
-                        log_p_i.append(log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2)))
-                else:
-                    for i in range(n_p, n_2+1):
-                        log_p_i.append(log_nCr(n_2, i)+(i*np.log(f_1))+((n_2-i)*np.log(1-f_1)))
-                log_p = logsumexp(log_p_i)
-                if log_p <= log_p_th:
-                    print('Significant Mutual Inclusivity found, with log_p %.3f'%log_p)
-                    MI_rep.append({
-                        'node1': ','.join(gene_names[_i] for _i in node1.genes),
-                        'node2': ','.join(gene_names[_i] for _i in node2.genes),
-                        'f_1': f_1,
-                        'f_2': f_2,
-                        'f_p': f_p,
-                        'log_p': log_p
-                        })
-    return(ME_rep, MI_rep)
+    m_forward = n_tumors-n_parent
+    p_forward = n_node/n_tumors
+    log_p_i_forward = np.zeros(n_only_node+1)
 
-def to_json(node, dataset, gene_names):
-    output = {}
-    output['genes'] = ','.join(gene_names[i] for i in node.genes)
-    output['l'] = -np.log(node.f)
-    if len(node.genes)>1:
-        _, ME_score, avg_p = ME_test(node, dataset, gene_names)
-        output['ME_score'] = float("%.3f" %ME_score)
-        output['ME_p'] = float("%.4f" %avg_p)
-    if node.parent is not None and not(node.parent.is_root):
-        if np.sum(np.sum(dataset[:,node.genes], axis=1)>0)<dataset.shape[0]:
-            PR_score, p_value = PR_test(node, dataset, gene_names)
-            output['PR_score'] = float("%.3f" %PR_score)
-            output['PR_p'] = float("%.4f" %p_value)
-    if len(node.children)>0:
-        output['children'] = [to_json(child, dataset, gene_names) for child in node.children]
-    return(output)
+    for i in range(n_only_node+1):
+        log_p_i_forward[i] = log_nCr(m_forward, i)+(i*np.log(p_forward))+((m_forward-i)*np.log(1-p_forward))
 
-def to_newick(node, dataset=None, gene_names=None):
-    def _parse_json(js):
-        try:
-            newick = '-'.join(js['genes'].split(','))
-            if len(newick)==0:
-                newick = 'Root'
-        except KeyError:
-            newick = ''
-        if 'l' in js:
-            newick += ':' + '%.3f'%js['l']
-        if len(js.keys())>3:
-            newick += '[&&NHX'
-            for _key in js.keys():
-                if _key not in ['genes','l','children']:
-                    newick += ':' + _key + '=' + str(js[_key])
-            newick += ']'
-        if 'children' in js:
-            info = []
-            for child in js['children']:
-                info.append(_parse_json(child))
-            info = ','.join(info)
-            newick = '(' + info + ')' + newick
-        return(newick)
-    if type(node) == dict:
-        # Used to convert json to newick
-        js = node
-    else:
-        js = to_json(node, dataset, gene_names)
-    return(_parse_json(js)+';')
+    log_p_forward = logsumexp(log_p_i_forward)
+
+    m_backward = n_tumors-n_node
+    p_backward = n_parent/n_tumors
+    log_p_i_backward = np.zeros(n_only_parent+1)
+    for i in range(n_only_parent+1):
+        log_p_i_backward[i] = log_nCr(m_backward, i)+(i*np.log(p_backward))+((m_backward-i)*np.log(1-p_backward))
+    log_p_backward = logsumexp(log_p_i_backward)
+
+    # old test
+    # if n_only_node == 0:
+    #         PR_score = 0
+    # else:
+    #     PR_score = (n_tumors*n_only_node)/(n_node*(n_tumors-n_parent))
+    # if PR_score<1 and n_node>0:
+    #     p = n_node/n_tumors
+    #     m = n_tumors-n_parent
+    #     log_p_i = np.zeros(n_only_node+1)
+    #     for i in range(n_only_node+1):
+    #         log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
+    #     log_p = logsumexp(log_p_i)
+    # else:
+    #     log_p = 0
+    # return(PR_score, np.exp(log_p))
+    #
+
+    PR_score = np.exp(log_p_forward-log_p_backward)
+    PR_p = np.exp(log_p_forward)
+    return(PR_score, PR_p)
 
 def Geweke(chain, first_proportion=0.1, second_proporiton=0.5, threshold=2):
     ''' The convergence is achieved if Z score is below threshold (the standard value is 2) '''
@@ -265,6 +190,10 @@ def Gelman_Rubin(set_of_chains, burn_in=0.5, threshhold=1.2):
     PSRF = V_hat/W
     result = PSRF < threshhold
     return(result, PSRF)
+
+####### ------------------------------------------- #######
+####### ---- Functions used for postprocessing ---- #######
+####### ------------------------------------------- #######
 
 def dataset_visualization(input, output):
     # input: df or path to csv
@@ -350,3 +279,241 @@ def dataset_visualization(input, output):
     ax = fig_generator(ax, data, gene_names, bar_color='black', print_names=False)
     plt.tight_layout()
     plt.savefig(output)
+
+def PR_test_gbg(node, dataset, gene_names=None, mode='classic'):
+    # PR_score performed gene-by-gene (similar to ME_test)
+    if gene_names is None:
+        gene_names = [str(i) for i in range(dataset.shape[1])]
+    n_tumors = dataset.shape[0]
+    mut_freqs = []
+    df_indices = []
+    n = len(node.genes)
+    m = len(node.parent.genes)
+    if mode=='classic':
+        for _idx1 in range(n):
+            for _idx2 in range(m):
+                mutated_in_gene = dataset[:,node.genes[_idx1]]
+                mutated_in_parent = dataset[:,node.parent.genes[_idx2]]
+                mutated_only_in_node = mutated_in_gene * (1-mutated_in_parent)
+                n_parent = np.sum(mutated_in_parent)
+                n_node = np.sum(mutated_in_gene)
+                n_only_node = np.sum(mutated_only_in_node)
+                if n_only_node == 0:
+                    f_1 = 0
+                    f_2 = n_node/n_tumors
+                    PR_score = 0
+                else:
+                    f_1 = n_only_node/(n_tumors-n_parent)
+                    f_2 = n_node/n_tumors
+                    PR_score = f_1/f_2
+                if PR_score<1 and n_node>0:
+                # Calculating P-value:
+                    p = n_node/n_tumors
+                    m = n_tumors-n_parent
+                    log_p_i = np.zeros(n_only_node+1)
+                    for i in range(n_only_node+1):
+                        log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
+                    log_p = logsumexp(log_p_i)
+                else:
+                    log_p = 0
+                mut_freqs.append([f_1, f_2, PR_score, log_p])
+                df_indices.append('{} to {}'.format(gene_names[node.parent.genes[_idx2]], gene_names[node.genes[_idx1]]))
+    elif mode=='new':
+        for _idx1 in range(n):
+            for _idx2 in range(m):
+                mutated_in_gene = dataset[:,node.genes[_idx1]]
+                mutated_in_parent = dataset[:,node.parent.genes[_idx2]]
+                mutated_only_in_node = mutated_in_gene * (1-mutated_in_parent)
+                n_parent = np.sum(mutated_in_parent)
+                n_node = np.sum(mutated_in_gene)
+                n_only_node = np.sum(mutated_only_in_node)
+                p = n_node/n_tumors
+                m = n_tumors-n_parent
+                log_p_i = np.zeros(m+1)
+                for i in range(m+1):
+                    log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
+                PR_score = np.exp(logsumexp(log_p_i[:n_only_node+1])-logsumexp(log_p_i[n_only_node:]))
+                mut_freqs.append([n_only_node/(n_tumors-n_parent), n_node/n_tumors, PR_score, PR_score])
+                df_indices.append('{} to {}'.format(gene_names[node.parent.genes[_idx2]], gene_names[node.genes[_idx1]]))
+    ######
+    mutated_in_node = np.sum(dataset[:,node.genes], axis=1)>0
+    mutated_in_parent = np.sum(dataset[:,node.parent.genes], axis=1)>0
+    mutated_only_in_node = mutated_in_node * (1-mutated_in_parent)
+    
+    n_parent = np.sum(mutated_in_parent)
+    n_node = np.sum(mutated_in_node)
+    n_only_node = np.sum(mutated_only_in_node)
+    if mode=='classic':
+        if n_only_node == 0:
+            PR_score = 0
+            f_1 = 0
+            f_2 = n_node/n_tumors
+        else:
+            f_1 = n_only_node/(n_tumors-n_parent)
+            f_2 = n_node/n_tumors
+            PR_score = f_1/f_2
+        if PR_score<1 and n_node>0:
+            p = n_node/n_tumors
+            m = n_tumors-n_parent
+            log_p_i = np.zeros(n_only_node+1)
+            for i in range(n_only_node+1):
+                log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
+            log_p = logsumexp(log_p_i)
+        else:
+            log_p = 0
+        mut_freqs.append([f_1, f_2, PR_score, log_p])
+        df_indices.append('Complete node')
+    elif mode=='new':
+        m = n_tumors-n_parent
+        p = n_node/n_tumors
+        log_p_i = np.zeros(m+1)
+        for i in range(m+1):
+            log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
+        PR_score = np.exp(logsumexp(log_p_i[:n_only_node+1])-logsumexp(log_p_i[n_only_node:]))
+        mut_freqs.append([n_only_node/(n_tumors-n_parent), n_node/n_tumors, PR_score, PR_score])
+        df_indices.append('Complete node')
+    #######
+    df = pd.DataFrame(
+        data=mut_freqs,
+        columns=[
+            'Child_Mut_Freq_in_Healthy_Parent',
+            'Child_Mut_Freq',
+            'PR_score',
+            'Log_p_value'
+            ],
+        index=df_indices)
+    return(df, np.mean(df.iloc[:-1, 2]), np.mean(np.exp(df.iloc[:-1,3])))
+
+def minimum_mutation_freq(n_tumors, n_max=None, p_th=0.5, mode='PR-with-HighlyMutated'):
+    if mode == 'PR-with-HighlyMutated':
+        # If all the tumors with mutation in THE GENE also have mutation in the most-
+        # -highly mutated gene (perfect progression), the p_value of PR should be less -
+        # - than the threshold (of around 0.5)
+        n_min = int(np.ceil(n_tumors*(1-(p_th)**(1/(n_tumors-n_max)))))
+    elif mode == 'PR-with-eachother':
+        # If two genes are always mutated together (perfect progression), the p_value of -
+        # - PR should be less than the threshold (of around 0.02)
+        for i in range(n_tumors+1):
+            if (n_tumors-i)*np.log(1-(i/n_tumors))<np.log(p_th):
+                n_min = i
+                break
+    elif mode == 'ME-with-HighlyMutated':
+        # If we have perfect ME with the most-highly mutated gene (perfect ME), the -
+        # - ME signal's p_value should be less than the threshold (of around  )
+        n_min = int(np.ceil((np.log(p_th))/(np.log(1-(n_max/n_tumors)))))
+    elif mode == 'ME-with-eachother':
+        # If two genes are never mutated together (perfect ME), the p_value of -
+        # - ME should be less than the threshold (of around )
+        for i in range(n_tumors+1):
+            if i*np.log(1-(i/n_tumors)) <= np.log(p_th):
+                n_min = i
+                break
+    return(n_min)
+
+def to_json(node, dataset, gene_names):
+    output = {}
+    output['genes'] = ','.join(gene_names[i] for i in node.genes)
+    output['l'] = -np.log(node.f)
+    if len(node.genes)>1:
+        _, ME_score, avg_p = ME_test(node, dataset, gene_names)
+        output['ME_score'] = float("%.3f" %ME_score)
+        output['ME_p'] = float("%.4f" %avg_p)
+    if node.parent is not None and not(node.parent.is_root):
+        if np.sum(np.sum(dataset[:,node.genes], axis=1)>0)<dataset.shape[0]:
+            PR_score, p_value = PR_test(node, dataset, gene_names)
+            output['PR_score'] = float("%.3f" %PR_score)
+            output['PR_p'] = float("%.4f" %p_value)
+    if len(node.children)>0:
+        output['children'] = [to_json(child, dataset, gene_names) for child in node.children]
+    return(output)
+
+def to_newick(node, dataset=None, gene_names=None):
+    def _parse_json(js):
+        try:
+            newick = '-'.join(js['genes'].split(','))
+            if len(newick)==0:
+                newick = 'Root'
+        except KeyError:
+            newick = ''
+        if 'l' in js:
+            newick += ':' + '%.3f'%js['l']
+        if len(js.keys())>3:
+            newick += '[&&NHX'
+            for _key in js.keys():
+                if _key not in ['genes','l','children']:
+                    newick += ':' + _key + '=' + str(js[_key])
+            newick += ']'
+        if 'children' in js:
+            info = []
+            for child in js['children']:
+                info.append(_parse_json(child))
+            info = ','.join(info)
+            newick = '(' + info + ')' + newick
+        return(newick)
+    if type(node) == dict:
+        # Used to convert json to newick
+        js = node
+    else:
+        js = to_json(node, dataset, gene_names)
+    return(_parse_json(js)+';')
+
+def SR_analysis(node, dataset, gene_names, log_p_th = 0):
+    # Analysis of possible dependencies among the children of a node
+    ME_rep = []
+    MI_rep = []
+    n_tumors = dataset.shape[0]
+    n_children = len(node.children)
+    for i in range(n_children):
+        node1 = node.children[i]
+        mutated_in_node1 = np.sum(dataset[:,node1.genes], axis=1)>0
+        n_1 = np.sum(mutated_in_node1)
+        f_1 = n_1/n_tumors
+        for j in range(i+1, n_children):
+            node2 = node.children[j]
+            mutated_in_node2 = np.sum(dataset[:,node2.genes], axis=1)>0
+            n_2 = np.sum(mutated_in_node2)
+            f_2 = n_2/n_tumors
+            mutated_in_both = mutated_in_node1 * mutated_in_node2
+            n_p = np.sum(mutated_in_both)
+            f_p = n_p/n_tumors
+            if f_p <= f_1*f_2:
+                # There is a chance of mutual exclusivity
+                log_p_i = np.zeros(n_p+1)
+                if n_1 <= n_2:
+                    for i in range(n_p+1):
+                        log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
+                else:
+                    for i in range(n_p+1):
+                        log_p_i[i] = log_nCr(n_2, i)+(i*np.log(f_1))+((n_2-i)*np.log(1-f_1))
+                log_p = logsumexp(log_p_i)
+                if log_p <= log_p_th:
+                    print('Significant Mutual Exclusivity found, with log_p %.3f'%log_p)
+                    ME_rep.append({
+                        'node1': ','.join(gene_names[_i] for _i in node1.genes),
+                        'node2': ','.join(gene_names[_i] for _i in node2.genes),
+                        'f_1': f_1,
+                        'f_2': f_2,
+                        'f_p': f_p,
+                        'log_p': log_p
+                        })
+            else:
+                # There is a chance of mutual inclusivity
+                log_p_i = []
+                if n_1 <= n_2:
+                    for i in range(n_p, n_1+1):
+                        log_p_i.append(log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2)))
+                else:
+                    for i in range(n_p, n_2+1):
+                        log_p_i.append(log_nCr(n_2, i)+(i*np.log(f_1))+((n_2-i)*np.log(1-f_1)))
+                log_p = logsumexp(log_p_i)
+                if log_p <= log_p_th:
+                    print('Significant Mutual Inclusivity found, with log_p %.3f'%log_p)
+                    MI_rep.append({
+                        'node1': ','.join(gene_names[_i] for _i in node1.genes),
+                        'node2': ','.join(gene_names[_i] for _i in node2.genes),
+                        'f_1': f_1,
+                        'f_2': f_2,
+                        'f_p': f_p,
+                        'log_p': log_p
+                        })
+    return(ME_rep, MI_rep)
