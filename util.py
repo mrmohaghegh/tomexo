@@ -12,12 +12,13 @@ import matplotlib.pyplot as plt
 ####### ------------------------------------------- #######
 
 def save_result(file_path, obj):
-    sfp = file_path.split('/')
-    adrs = '.'
-    for i in sfp[:-1]:
-        if i not in os.listdir(adrs):
-            os.mkdir(os.path.join(adrs, i))
-        adrs = os.path.join(adrs, i)
+    # sfp = file_path.split('/')
+    # adrs = '.'
+    # for i in sfp[:-1]:
+    #     if i not in os.listdir(adrs):
+    #         os.mkdir(os.path.join(adrs, i))
+    #     adrs = os.path.join(adrs, i)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
     with open(file_path, 'wb') as f:
         pickle.dump(obj, f)
 
