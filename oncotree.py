@@ -195,13 +195,13 @@ class OncoTree():
             print("Pruning mode error!")
         return(self)
 
-    def prune(self, dataset, consider_mut_freqs=False):
+    def prune(self, dataset, consider_mut_freqs=True):
         self = self.prune_by_p_values(dataset)
         if consider_mut_freqs:
             self = self.prune_by_mut_freqs(dataset)
         return(self)
 
-    def prune_by_mut_freqs(self, dataset, th_f=0.005):
+    def prune_by_mut_freqs(self, dataset, th_f=0.005, just_f=True):
         # th_p: threshold for prob. of driver mutation to keep the node
         #       set to pfp
         # th_f: threshold for f to keep the node
@@ -215,13 +215,14 @@ class OncoTree():
                 if node.f <= th_f:
                     nodes_to_remove.append(node.genes)
                 elif not(node.is_root):
-                    total_f = 1
-                    for anc_node in node.ancestors:
-                        total_f *= anc_node.f
-                    total_f *= node.f
-                    total_f *= (1/len(node.genes))
-                    if total_f <= th_p:
-                        nodes_to_remove.append(node.genes)
+                    if not just_f:
+                        total_f = 1
+                        for anc_node in node.ancestors:
+                            total_f *= anc_node.f
+                        total_f *= node.f
+                        total_f *= (1/len(node.genes))
+                        if total_f <= th_p:
+                            nodes_to_remove.append(node.genes)
             if len(nodes_to_remove)>0:
                 change_occured = True
             for item in nodes_to_remove:
@@ -1116,7 +1117,10 @@ class OncoTree():
             else:
                 n_cases_for_bk_dest = len(proposal.nodes)-1
             n_cases_for_bk_dest = n_cases_for_bk_dest - n_genes_for_bk # Excluding the selected nodes themselves
-            backward_prob = -np.log(n_cases_for_bk_dest)-np.log(2**(len(bk_list_of_simple_nodes))-1)
+            if len(bk_list_of_simple_nodes)>10:  # for numerical stability
+                backward_prob = -np.log(n_cases_for_bk_dest)-((len(bk_list_of_simple_nodes))*np.log(2))
+            else:
+                backward_prob = -np.log(n_cases_for_bk_dest)-np.log(2**(len(bk_list_of_simple_nodes))-1)
             if error_estimation:
                 proposal = proposal.assign_error_values(dataset)
             proposal = proposal.assign_f_values(dataset)
@@ -1157,7 +1161,10 @@ class OncoTree():
                 if debugging:
                     print("Selected parent:")
                     print(selected_node.genes)
-                forward_prob = -np.log(len(dest_candidates))-np.log(2**(len(list_of_simple_nodes))-1)
+                if len(list_of_simple_nodes)>10: # for numerical stability
+                    forward_prob = -np.log(len(dest_candidates))-((len(list_of_simple_nodes))*np.log(2))
+                else:
+                    forward_prob = -np.log(len(dest_candidates))-np.log(2**(len(list_of_simple_nodes))-1)
                 genes_set = []
                 for node in selected_subset:
                     genes_set.extend(node.genes)
