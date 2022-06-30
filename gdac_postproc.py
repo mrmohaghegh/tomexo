@@ -7,11 +7,16 @@ import matplotlib.pyplot as plt
 
 from oncotree import OncoTree
 
-sample_file = 'testing_folder/coadread/Intogen_coadread/progmo.pkl'
-data_file = 'testing_folder/coadread/gdac_firehose_COADREAD.csv'
-pdf_dir = 'testing_folder/coadread/coadread.pdf'
+#sample_file = 'testing_folder/coadread/Intogen_coadread/progmo.pkl'
+sample_file = 'result/mhn-gbm/progmo.pkl'
+data_file = 'data/mhn-gbm.csv'
+pdf_dir = 'result/mhn-gbm/mhn-gbm.pdf'
 
 df_input = pd.read_csv(data_file, delimiter=',', index_col=0, comment='#')
+if df_input.iloc[0,0] in [0,1]:
+    # The csv does not have index column
+    # RELOADING
+    df_input = pd.read_csv(data_file, delimiter=',', index_col=None, comment='#')
 gene_names = list(df_input.columns)
 dataset = np.array(df_input, dtype=bool)
 with open(sample_file, 'rb') as f:

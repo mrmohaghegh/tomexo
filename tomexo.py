@@ -138,6 +138,10 @@ output_folder = args.output
 #--------------------------------------
 
 df_input = pd.read_csv(input_file, delimiter=',', index_col=0, comment='#')
+if df_input.iloc[0,0] in [0,1]:
+    # The csv does not have index column
+    # RELOADING
+    df_input = pd.read_csv(input_file, delimiter=',', index_col=None, comment='#')
 gene_names = list(df_input.columns)
 dataset = np.array(df_input, dtype=bool)
 start_time = time.time()
@@ -168,12 +172,14 @@ if _b:
 else:
     report += '# Best chain has NOT converged (Geweke z score: %.3f) \n' %_GS
 
-set_of_posts = [posterior_array[_i,-n2:] for _i in range(posterior_array.shape[0])]
-(_b, _GR) =Gelman_Rubin(set_of_posts)
-if _b:
-    report += '# Gelman_Rubin convergence IS achieved (GR score: %.3f) \n' %_GR
-else:
-    report += '# Gelman_Rubin convergence IS NOT achieved (GR score: %.3f) \n' %_GR
+if n0>1: # if there is more than one chain
+    set_of_posts = [posterior_array[_i,-n2:] for _i in range(posterior_array.shape[0])]
+    (_b, _GR) =Gelman_Rubin(set_of_posts)
+    if _b:
+        report += '# Gelman_Rubin convergence IS achieved (GR score: %.3f) \n' %_GR
+    else:
+        report += '# Gelman_Rubin convergence IS NOT achieved (GR score: %.3f) \n' %_GR
+
 report += '# ----------Result analysis------------ # \n'
 
 star_tree = OncoTree.star_from_dataset(

@@ -730,7 +730,10 @@ class OncoTree():
                 print("Backward candidates:")
                 for _node in bk_candidates:
                     print(_node.genes)
-            backward_prob = -np.log(len(bk_candidates))-np.log((2**new_n_genes-2)/2)
+            if new_n_genes>10: # for numerical stability
+                backward_prob = -np.log(len(bk_candidates))-((new_n_genes-1)*np.log(2))
+            else:
+                backward_prob = -np.log(len(bk_candidates))-np.log((2**new_n_genes-2)/2)
             if error_estimation:
                 proposal = proposal.assign_error_values(dataset)
             proposal = proposal.assign_f_values(dataset)
@@ -762,7 +765,10 @@ class OncoTree():
             if debugging:
                 print("Selected subset:")
                 print(selected_subset)
-            forward_prob = -np.log(len(candidates))-np.log((2**(len(selected_node.genes))-2)/2)
+            if len(selected_node.genes)>10: # for numerical stability
+                forward_prob = -np.log(len(candidates))-((len(selected_node.genes)-1)*np.log(2))
+            else:
+                forward_prob = -np.log(len(candidates))-np.log((2**(len(selected_node.genes))-2)/2)
             for gene in selected_subset:
                 selected_node.genes.remove(gene)
             proposal.nodes.append(OncoNode(genes=selected_subset, f=0.5, parent=selected_node.parent))
@@ -810,7 +816,10 @@ class OncoTree():
                 print("Backward candidates:")
                 for _node in bk_candidates:
                     print(_node.genes)
-            backward_prob = -np.log(len(bk_candidates))-np.log(2**new_n_genes-2)
+            if new_n_genes>10: # for numerical stability
+                backward_prob = -np.log(len(bk_candidates))-(new_n_genes*np.log(2))
+            else:
+                backward_prob = -np.log(len(bk_candidates))-np.log(2**new_n_genes-2)
             if error_estimation:
                 proposal = proposal.assign_error_values(dataset)
             proposal = proposal.assign_f_values(dataset)
@@ -842,7 +851,10 @@ class OncoTree():
             if debugging:
                 print("Selected subset:")
                 print(selected_subset)
-            forward_prob = -np.log(len(candidates))-np.log(2**(len(selected_node.genes))-2)
+            if len(selected_node.genes)>10: # for numerical stability
+                forward_prob = -np.log(len(candidates))-((len(selected_node.genes))*np.log(2))
+            else:
+                forward_prob = -np.log(len(candidates))-np.log(2**(len(selected_node.genes))-2)
             for gene in selected_subset:
                 selected_node.genes.remove(gene)
             proposal.nodes.append(OncoNode(genes=selected_subset, f=0.5, parent=selected_node))
@@ -1208,7 +1220,10 @@ class OncoTree():
             selected_node.genes = []
             selected_node.parent = None
             proposal.nodes.remove(selected_node)
-            backward_prob = -np.log(len(proposal.nodes)-1)-np.log(2**(len(proposal.ps.genes))-1)
+            if len(proposal.ps.genes)>10: # for numerical stability
+                backward_prob = -np.log(len(proposal.nodes)-1)-((len(proposal.ps.genes))*np.log(2))
+            else:
+                backward_prob = -np.log(len(proposal.nodes)-1)-np.log(2**(len(proposal.ps.genes))-1)
             if error_estimation:
                 proposal = proposal.assign_error_values(dataset)
             proposal = proposal.assign_f_values(dataset)
@@ -1239,7 +1254,10 @@ class OncoTree():
             if debugging:
                 print("Selected node:")
                 print(selected_node.genes)
-            forward_prob = -np.log(len(dest_candidates))-np.log(2**(len(proposal.ps.genes))-1)
+            if len(proposal.ps.genes)>10: # for numerical stability
+                forward_prob = -np.log(len(dest_candidates))-((len(proposal.ps.genes))*np.log(2))
+            else:
+                forward_prob = -np.log(len(dest_candidates))-np.log(2**(len(proposal.ps.genes))-1)
             for gene in selected_subset:
                 proposal.ps.genes.remove(gene)
             proposal.nodes.append(OncoNode(genes=selected_subset, f=0.5, parent=selected_node))
