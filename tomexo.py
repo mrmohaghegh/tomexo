@@ -137,11 +137,11 @@ output_folder = args.output
 #------ Running the algorithm ---------
 #--------------------------------------
 
-df_input = pd.read_csv(input_file, delimiter=',', index_col=0, comment='#')
-if df_input.iloc[0,0] in [0,1]:
-    # The csv does not have index column
+df_input = pd.read_csv(input_file, delimiter=',', index_col=None, comment='#')
+if df_input.iloc[0,0] not in [0,1]:
+    # The csv does have index column
     # RELOADING
-    df_input = pd.read_csv(input_file, delimiter=',', index_col=None, comment='#')
+    df_input = pd.read_csv(input_file, delimiter=',', index_col=0, comment='#')
 gene_names = list(df_input.columns)
 dataset = np.array(df_input, dtype=bool)
 start_time = time.time()

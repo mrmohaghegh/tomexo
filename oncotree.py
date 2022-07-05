@@ -239,7 +239,7 @@ class OncoTree():
             pruned_tree,_=pruned_tree.fit_error_params(dataset)
         return(pruned_tree)
     
-    def prune_by_p_values(self, dataset, PR_th=1, ME_th=1, mode="into_simple_nodes"):
+    def prune_by_p_values(self, dataset, F2B_th=1, ME2MI_th=1, mode="into_simple_nodes"):
         # Prunes based on p-values for progression
         # modes: "into_simple_nodes", "into_passengers"
         pruned_tree = deepcopy(self)
@@ -248,8 +248,8 @@ class OncoTree():
         for node in PostOrderIter(pruned_tree.root):
             if not(node.is_root):
                 if len(node.genes)>1:
-                    ME_score,_ = ME_test(node, dataset)
-                    if ME_score >= ME_th:
+                    _,_,ME2MI = ME_test(node, dataset)
+                    if ME2MI >= ME2MI_th:
                         nodes_to_remove.append(node.genes)
         for item in nodes_to_remove:
             g = item[0]
@@ -267,8 +267,8 @@ class OncoTree():
             for node in PostOrderIter(pruned_tree.root):
                 if not(node.is_root):
                     if not(node.parent.is_root):
-                        PR_score,_ = PR_test(node, dataset)
-                        if PR_score >= PR_th:
+                        _, _, _, _, FtoB = PR_test(node, dataset)
+                        if FtoB >= F2B_th:
                             nodes_to_remove.append(node.genes)
             if len(nodes_to_remove)>0:
                 change_happend = True
@@ -324,18 +324,19 @@ class OncoTree():
                 label = '<%s>'%genes_list
                 txt += '    Node%i [label=%s, peripheries=1, shape=box, style=\"rounded, filled\", fillcolor=grey95, color=black];\n'%(i, label)
             else:
-                ME_score, ME_p = ME_test(node, dataset)
-                if ME_score<np.exp(-2): # significant mutual exclusivity!
+                ME_score, ME_p, ME2MI = ME_test(node, dataset)
+                if ME_p<0.1: # significant mutual exclusivity!
                     fillcolor = 'mistyrose'
                     bordercolor = 'red'
                 else:
                     fillcolor = 'grey95'
                     bordercolor = 'black'
                 if perfect_ME(node, dataset):
-                    peripheries = 2
+                    #peripheries = 2 #(used for double-line borders in case of perfect ME)
+                    peripheries = 1
                 else:
                     peripheries = 1
-                label = '<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'ForestGreen\' POINT-SIZE=\'12\'> (%.2e) </font>>'%(genes_list,np.log(ME_score),ME_p)
+                label = '<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'ForestGreen\' POINT-SIZE=\'12\'> (%.2e) </font>>'%(genes_list,ME_score,ME_p)
                 txt += '    Node%i [label=%s, peripheries=%i, shape=box, style=\"rounded, filled\", fillcolor=%s, color=%s];\n'%(i, label, peripheries, fillcolor, bordercolor)
         if (show_passengers and len(self.ps.genes)>0):
             genes_list = ','.join(gene_names[i] for i in self.ps.genes)
@@ -348,18 +349,20 @@ class OncoTree():
             else:
                 for child in node.children:
                     j = driver_nodes.index(child)
-                    PR_score, PR_p = PR_test(child, dataset)
-                    if PR_score < np.exp(-2):
+                    #PR_score, PR_p = PR_test(child, dataset)
+                    PR_forward, F_p, PR_backward, B_p, FtoB_p_ratio = PR_test(child, dataset)
+                    if F_p < 0.1:
                         arrow_c = 'red'
                     else:
                         arrow_c = 'black'
                     if perfect_PR(child, dataset):
-                        arrow_color = '\"%s:%s\"'%(arrow_c, arrow_c)
+                        #arrow_color = '\"%s:%s\"'%(arrow_c, arrow_c) #(used for double-line arrow in case of perfect PR)
+                        arrow_color = arrow_c
                     else:
                         arrow_color = arrow_c
-                    label = '< %.2f <br/> <font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'ForestGreen\' POINT-SIZE=\'12\'> (%.2e) </font>>'%(child.f, np.log(PR_score), PR_p)
+                    label = '< %.2f <br/> <font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'ForestGreen\' POINT-SIZE=\'12\'> (%.2e) </font>>'%(child.f, PR_forward, F_p)
                     txt += '    Node%i -> Node%i [style=solid, color=%s, label=%s];\n' %(i, j, arrow_color, label)
-                    if plot_reverse_edges and PR_p/PR_score < np.exp(-2): # strong reverse relation as well!
+                    if plot_reverse_edges and B_p < 0.1: # strong reverse relation as well!
                         txt += '    Node%i -> Node%i [style=dashed, color=black];\n' %(j, i)
 
         txt += '}'
@@ -1433,8 +1436,8 @@ class OncoTree():
                                 if key_gene in _n.genes:
                                     the_node = _n
                                     break
-                            PR_value,_ = PR_test(the_node, dataset)
-                            if PR_value >= 1:
+                            _,_,_,_,F2B = PR_test(the_node, dataset)
+                            if F2B >= 1:
                                 node = the_node
                                 try_again = True
                         else:
@@ -1461,58 +1464,58 @@ class OncoTree():
                 ).to_picture(filename)
         return(Image(filename))
 
-    def to_dot_compressed(self, dataset, gene_names=None, dot_file='tmp.dot', fig_file='tmp.png', show_passengers=False):
-        driver_tree_nodes = [self.root]
-        driver_tree_nodes.extend([node for node in self.root.descendants if not(node.is_simple)])
-        simple_node_genes = [node.genes[0] for node in self.root.children if node.is_simple]
-        if gene_names is None:
-            gene_names= ['g%i'%i for i in range(self.n_genes)]
-        txt = 'digraph tree {\n'
-        for i, node in enumerate(driver_tree_nodes):
-            genes_list = ','.join(gene_names[i] for i in node.genes)
-            if len(genes_list)==0:
-                genes_list = ' '
-                txt += '    Node%i [label=<%s>, shape=circle];\n'%(i, genes_list)
-            elif len(node.genes)>1:
-                #_, ME_score, ME_p = ME_test(node, dataset, gene_names, mode=mode)
-                ME_score,_ = ME_test(node, dataset)
-                #if mode == 'classic':
-                    #txt += '    Node%i [label=<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'Red\' POINT-SIZE=\'12\'> (%.2e) </font>>, shape=box];\n'%(i, genes_list, ME_score, ME_p)
-                #txt += '    Node%i [label=<%s<br/><br/> <font color=\'Blue\'>ME_score:%.2f</font> ----- <font color=\'Red\'> p:%.2e</font>>];\n'%(i, genes_list, ME_score, ME_p)
-                #elif mode == 'new':
-                txt += '    Node%i [label=<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2e </font>>, shape=box];\n'%(i, genes_list, ME_score)
-            else:
-                txt += '    Node%i [label=<%s>, shape=box];\n'%(i, genes_list)
-        if (show_passengers and len(self.ps.genes)>0):
-            genes_list = ','.join(gene_names[i] for i in self.ps.genes)
-            #txt += '    PS [label=<<font POINT-SIZE=\'12\'>Passengers:</font><br/><br/>%s>][shape=box];\n'%(genes_list)
-            txt += '    PS [label=<%s>][shape=oval];\n'%(genes_list)
-        if len(simple_node_genes)>0:
-            genes_list = ','.join(gene_names[i] for i in simple_node_genes)
-            txt += '    Simples [label=<%s>, shape=box];\n'%(genes_list)
-            txt += '    Node0 -> Simples [style=bold, label=<>];\n'
-        for i, node in enumerate(driver_tree_nodes):
-            if node.is_root or np.sum(np.sum(dataset[:,node.genes], axis=1)>0)==dataset.shape[0]:
-                for child in node.children:
-                    if not(child.is_simple):
-                        j = driver_tree_nodes.index(child)
-                        txt += '    Node%i -> Node%i [style=bold, label=< %.2f >];\n' %(i, j, child.f)
-            else:
-                for child in node.children:
-                    j = driver_tree_nodes.index(child)
-                    #PR_score, PR_p = PR_test(child, dataset, gene_names, mode=mode)
-                    PR_score,_ = PR_test(child, dataset)
-                    #if mode=='classic':
-                        #txt += '    Node%i -> Node%i [style=bold, label=< %.2f <br/> <font color=\'ForestGreen\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'Red\' POINT-SIZE=\'12\'> (%.2e) </font>>];\n' %(i, j, child.f, PR_score, PR_p)
-                    #txt += '    Node%i -> Node%i [style=bold, label=<%.2f<br/><br/> <font color=\'ForestGreen\'>PR_score:%.2f</font><br/><font color=\'Red\'>p:%.2e</font>>];\n' %(i, j, child.f, PR_score, PR_p)
-                    #elif mode=='new':
-                    txt += '    Node%i -> Node%i [style=bold, label=< %.2f <br/> <font color=\'ForestGreen\' POINT-SIZE=\'12\'> %.2e </font>>];\n' %(i, j, child.f, PR_score)
+    # def to_dot_compressed(self, dataset, gene_names=None, dot_file='tmp.dot', fig_file='tmp.png', show_passengers=False):
+    #     driver_tree_nodes = [self.root]
+    #     driver_tree_nodes.extend([node for node in self.root.descendants if not(node.is_simple)])
+    #     simple_node_genes = [node.genes[0] for node in self.root.children if node.is_simple]
+    #     if gene_names is None:
+    #         gene_names= ['g%i'%i for i in range(self.n_genes)]
+    #     txt = 'digraph tree {\n'
+    #     for i, node in enumerate(driver_tree_nodes):
+    #         genes_list = ','.join(gene_names[i] for i in node.genes)
+    #         if len(genes_list)==0:
+    #             genes_list = ' '
+    #             txt += '    Node%i [label=<%s>, shape=circle];\n'%(i, genes_list)
+    #         elif len(node.genes)>1:
+    #             #_, ME_score, ME_p = ME_test(node, dataset, gene_names, mode=mode)
+    #             ME_score,_ = ME_test(node, dataset)
+    #             #if mode == 'classic':
+    #                 #txt += '    Node%i [label=<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'Red\' POINT-SIZE=\'12\'> (%.2e) </font>>, shape=box];\n'%(i, genes_list, ME_score, ME_p)
+    #             #txt += '    Node%i [label=<%s<br/><br/> <font color=\'Blue\'>ME_score:%.2f</font> ----- <font color=\'Red\'> p:%.2e</font>>];\n'%(i, genes_list, ME_score, ME_p)
+    #             #elif mode == 'new':
+    #             txt += '    Node%i [label=<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2e </font>>, shape=box];\n'%(i, genes_list, ME_score)
+    #         else:
+    #             txt += '    Node%i [label=<%s>, shape=box];\n'%(i, genes_list)
+    #     if (show_passengers and len(self.ps.genes)>0):
+    #         genes_list = ','.join(gene_names[i] for i in self.ps.genes)
+    #         #txt += '    PS [label=<<font POINT-SIZE=\'12\'>Passengers:</font><br/><br/>%s>][shape=box];\n'%(genes_list)
+    #         txt += '    PS [label=<%s>][shape=oval];\n'%(genes_list)
+    #     if len(simple_node_genes)>0:
+    #         genes_list = ','.join(gene_names[i] for i in simple_node_genes)
+    #         txt += '    Simples [label=<%s>, shape=box];\n'%(genes_list)
+    #         txt += '    Node0 -> Simples [style=bold, label=<>];\n'
+    #     for i, node in enumerate(driver_tree_nodes):
+    #         if node.is_root or np.sum(np.sum(dataset[:,node.genes], axis=1)>0)==dataset.shape[0]:
+    #             for child in node.children:
+    #                 if not(child.is_simple):
+    #                     j = driver_tree_nodes.index(child)
+    #                     txt += '    Node%i -> Node%i [style=bold, label=< %.2f >];\n' %(i, j, child.f)
+    #         else:
+    #             for child in node.children:
+    #                 j = driver_tree_nodes.index(child)
+    #                 #PR_score, PR_p = PR_test(child, dataset, gene_names, mode=mode)
+    #                 PR_score,_ = PR_test(child, dataset)
+    #                 #if mode=='classic':
+    #                     #txt += '    Node%i -> Node%i [style=bold, label=< %.2f <br/> <font color=\'ForestGreen\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'Red\' POINT-SIZE=\'12\'> (%.2e) </font>>];\n' %(i, j, child.f, PR_score, PR_p)
+    #                 #txt += '    Node%i -> Node%i [style=bold, label=<%.2f<br/><br/> <font color=\'ForestGreen\'>PR_score:%.2f</font><br/><font color=\'Red\'>p:%.2e</font>>];\n' %(i, j, child.f, PR_score, PR_p)
+    #                 #elif mode=='new':
+    #                 txt += '    Node%i -> Node%i [style=bold, label=< %.2f <br/> <font color=\'ForestGreen\' POINT-SIZE=\'12\'> %.2e </font>>];\n' %(i, j, child.f, PR_score)
 
-        txt += '}'
-        with open(dot_file, 'w') as f:
-            f.write(txt)
-        if fig_file.endswith('.pdf'):
-            check_call(['dot','-Tpdf',dot_file,'-o',fig_file])
-        else:
-            check_call(['dot','-Tpng',dot_file,'-o',fig_file])
-        return(txt)
+    #     txt += '}'
+    #     with open(dot_file, 'w') as f:
+    #         f.write(txt)
+    #     if fig_file.endswith('.pdf'):
+    #         check_call(['dot','-Tpdf',dot_file,'-o',fig_file])
+    #     else:
+    #         check_call(['dot','-Tpng',dot_file,'-o',fig_file])
+    #     return(txt)

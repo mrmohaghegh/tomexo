@@ -78,6 +78,7 @@ def ME_test(node, dataset):
     if n > 1:
         mi_log_p_values = []
         me_log_p_values = []
+        ME_score_values = []
         for _idx1 in range(n-1):
             for _idx2 in range(_idx1+1, n):
                 pair = [node.genes[_idx1], node.genes[_idx2]]
@@ -89,17 +90,21 @@ def ME_test(node, dataset):
                 if n_1 == 0: # n_1 is the smaller number
                     me_log_p = 0 # set the p_value to 1
                     mi_log_p = 0
+                    ME_score = 1 # 0/0
                 else:
                     log_p_i = np.zeros(n_1+1)
                     for i in range(n_1+1):
                         log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
                     me_log_p = logsumexp(log_p_i[:n_p+1])
                     mi_log_p = logsumexp(log_p_i[n_p:])
+                    ME_score = f_p/(f_1*f_2)
                 me_log_p_values.append(me_log_p)
                 mi_log_p_values.append(mi_log_p)
-        ME_score = np.mean(np.exp(me_log_p_values))/np.mean(np.exp(mi_log_p_values))
+                ME_score_values.append(ME_score)
+        overall_ME_score = np.mean(ME_score_values)       
+        MEtoMI_p_ratio = np.mean(np.exp(me_log_p_values))/np.mean(np.exp(mi_log_p_values))
         ME_p = np.mean(np.exp(me_log_p_values))
-        return(ME_score, ME_p)
+        return(overall_ME_score, ME_p, MEtoMI_p_ratio)
     else:
         return()
 
@@ -120,42 +125,35 @@ def PR_test(node, dataset):
     n_only_node = np.sum(mutated_only_in_node)
     n_only_parent = np.sum(mutated_only_in_parent)
 
-    m_forward = n_tumors-n_parent
-    p_forward = n_node/n_tumors
-    log_p_i_forward = np.zeros(n_only_node+1)
+    if n_node == 0:
+        PR_forward = 1
+        log_p_forward = 0
+    else:
+        m_forward = n_tumors-n_parent
+        p_forward = n_node/n_tumors
+        log_p_i_forward = np.zeros(n_only_node+1)
+        for i in range(n_only_node+1):
+            log_p_i_forward[i] = log_nCr(m_forward, i)+(i*np.log(p_forward))+((m_forward-i)*np.log(1-p_forward))
+        log_p_forward = logsumexp(log_p_i_forward)
+        PR_forward = (n_only_node/m_forward)/(p_forward)
 
-    for i in range(n_only_node+1):
-        log_p_i_forward[i] = log_nCr(m_forward, i)+(i*np.log(p_forward))+((m_forward-i)*np.log(1-p_forward))
+    if n_parent == 0:
+        PR_backward = 1
+        log_p_backward = 0
+    else:
+        m_backward = n_tumors-n_node
+        p_backward = n_parent/n_tumors
+        log_p_i_backward = np.zeros(n_only_parent+1)
+        for i in range(n_only_parent+1):
+            log_p_i_backward[i] = log_nCr(m_backward, i)+(i*np.log(p_backward))+((m_backward-i)*np.log(1-p_backward))
+        log_p_backward = logsumexp(log_p_i_backward)
+        PR_backward = (n_only_parent/m_backward)/(p_backward)
 
-    log_p_forward = logsumexp(log_p_i_forward)
+    FtoB_p_ratio = np.exp(log_p_forward-log_p_backward)
+    F_p = np.exp(log_p_forward)
+    B_p = np.exp(log_p_backward)
 
-    m_backward = n_tumors-n_node
-    p_backward = n_parent/n_tumors
-    log_p_i_backward = np.zeros(n_only_parent+1)
-    for i in range(n_only_parent+1):
-        log_p_i_backward[i] = log_nCr(m_backward, i)+(i*np.log(p_backward))+((m_backward-i)*np.log(1-p_backward))
-    log_p_backward = logsumexp(log_p_i_backward)
-
-    # old test
-    # if n_only_node == 0:
-    #         PR_score = 0
-    # else:
-    #     PR_score = (n_tumors*n_only_node)/(n_node*(n_tumors-n_parent))
-    # if PR_score<1 and n_node>0:
-    #     p = n_node/n_tumors
-    #     m = n_tumors-n_parent
-    #     log_p_i = np.zeros(n_only_node+1)
-    #     for i in range(n_only_node+1):
-    #         log_p_i[i] = log_nCr(m, i)+(i*np.log(p))+((m-i)*np.log(1-p))
-    #     log_p = logsumexp(log_p_i)
-    # else:
-    #     log_p = 0
-    # return(PR_score, np.exp(log_p))
-    #
-
-    PR_score = np.exp(log_p_forward-log_p_backward)
-    PR_p = np.exp(log_p_forward)
-    return(PR_score, PR_p)
+    return(PR_forward, F_p, PR_backward, B_p, FtoB_p_ratio)
 
 def Geweke(chain, first_proportion=0.1, second_proporiton=0.5, threshold=2):
     ''' The convergence is achieved if Z score is below threshold (the standard value is 2) '''
@@ -195,6 +193,65 @@ def Gelman_Rubin(set_of_chains, burn_in=0.5, threshhold=1.2):
 ####### ------------------------------------------- #######
 ####### ---- Functions used for postprocessing ---- #######
 ####### ------------------------------------------- #######
+
+def jacc(set1, set2):
+    u = len(np.union1d(set1, set2))
+    if u == 0:
+        return(0)
+    else:
+        i = len(np.intersect1d(set1, set2, assume_unique=True))
+        return((u-i)/u)
+
+def caset(progmo, idx1, idx2):
+    a1 = []
+    a2 = []
+    for node1 in progmo.nodes:
+        if idx1 in node1.genes:
+            a1.extend(node1.genes)
+            for node2 in node1.ancestors:
+                a1.extend(node2.genes)
+            break
+    for node1 in progmo.nodes:
+        if idx2 in node1.genes:
+            a2.extend(node1.genes)
+            for node2 in node1.ancestors:
+                a2.extend(node2.genes)
+            break      
+    return(np.intersect1d(a1, a2, assume_unique=True))
+
+def caset_distance(sample, ref_progmo):
+    n = len(sample.genes)
+    nom = 0
+    for idx1 in range(n):
+        for idx2 in range(idx1+1, n):
+            nom += jacc(caset(sample, idx1, idx2), caset(ref_progmo, idx1, idx2))
+    return(nom/(n*(n-1)/2))
+
+def disc(progmo, idx1, idx2):
+    a1 = []
+    a2 = []
+    for node1 in progmo.nodes:
+        if idx1 in node1.genes:
+            a1.extend(node1.genes)
+            for node2 in node1.ancestors:
+                a1.extend(node2.genes)
+            break
+    for node1 in progmo.nodes:
+        if idx2 in node1.genes:
+            a2.extend(node1.genes)
+            for node2 in node1.ancestors:
+                a2.extend(node2.genes)
+            break      
+    return(np.setdiff1d(a1, a2, assume_unique=True))
+
+def disc_distance(sample, ref_progmo):
+    n = len(sample.genes)
+    nom = 0
+    for idx1 in range(n):
+        for idx2 in range(n):
+            if idx2 != idx1:
+                nom += jacc(disc(sample, idx1, idx2), disc(ref_progmo, idx1, idx2))
+    return(nom/(n*(n-1)))
 
 def dataset_visualization(input, output):
     # input: df or path to csv
