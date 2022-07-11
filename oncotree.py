@@ -62,7 +62,7 @@ class OncoNode(NodeMixin):
 
 class OncoTree():
 
-    def __init__(self, nodes, pfp, pfn, single_error=False):
+    def __init__(self, nodes, pfp, pfn, single_error=False, mut_rates=None):
         self.nodes = nodes
         tmp = []
         for node in nodes:
@@ -78,6 +78,7 @@ class OncoTree():
         self.pfp = pfp
         self.pfn = pfn
         self.single_error = single_error
+        self.mut_rates = mut_rates
 
     @classmethod
     def from_dataset(cls, dataset, coeff=0.5, passenger_threshold=0.001, pfp=0.001, pfn=0.001, single_error=False, error_estimation=False):
@@ -98,7 +99,9 @@ class OncoTree():
             else:
                 nodes[-1].genes.append(mmg[i])
         nodes.append(psnode)
-        prog_mo = cls(nodes, pfp=pfp, pfn=pfn, single_error=single_error)
+        prog_mo = cls(nodes, pfp=pfp, pfn=pfn, single_error=single_error, mut_rates=np.sum(dataset,axis=0))
+        # for the case of uniform rate of mutation for the genes of each node, use:
+        # prog_mo = cls(nodes, pfp=pfp, pfn=pfn, single_error=single_error)
         prog_mo = prog_mo.assign_f_values(dataset)
         if error_estimation:
             prog_mo = prog_mo.assign_error_values(dataset)
@@ -113,7 +116,9 @@ class OncoTree():
             nodes.append(OncoNode(parent=root_node, genes=[gene], f=0.5))
         psnode = OncoNode(genes=[], f=0)
         nodes.append(psnode)
-        prog_mo = cls(nodes, pfp=pfp, pfn=pfn, single_error=single_error)
+        prog_mo = cls(nodes, pfp=pfp, pfn=pfn, single_error=single_error, mut_rates=np.sum(dataset,axis=0))
+        # for the case of uniform rate of mutation for the genes of each node, use:
+        # prog_mo = cls(nodes, pfp=pfp, pfn=pfn, single_error=single_error)
         prog_mo = prog_mo.assign_f_values(dataset)
         if error_estimation:
             prog_mo = prog_mo.assign_error_values(dataset)
@@ -542,15 +547,23 @@ class OncoTree():
                     _lambda_eps[node] = (r[node]-1)/pfp - (node.s-r[node])/(1-pfp)
                     _lambda_del[node] = -1/(1-pfn)
                 else:
+                    if self.mut_rates is None:
+                        the_coeff = r[node]/node.s
+                    else:
+                        the_coeff = (np.sum(dataset[tumor_idx, node.genes]*self.mut_rates[node.genes]))/(np.sum(self.mut_rates[node.genes]))
                     _lambda[node] = logsumexp([
-                        np.log(r[node]/node.s)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
-                        np.log((node.s-r[node])/node.s)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
+                        np.log(the_coeff)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
+                        np.log(1-the_coeff)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
                     ])
                     _lambda_eps[node] = (
-                            (r[node]*(1-pfn)/node.s)*((r[node]-1)*(pfp**(r[node]-2))*((1-pfp)**(node.s-r[node]))-(node.s-r[node])*((1-pfp)**(node.s-r[node]-1))*(pfp**(r[node]-1)))+
-                            (node.s-r[node]*pfn/node.s)*((r[node])*(pfp**(r[node]-1))*((1-pfp)**(node.s-r[node]-1))-(node.s-r[node]-1)*((1-pfp)**(node.s-r[node]-2))*(pfp**(r[node])))
+                            (the_coeff*(1-pfn))*((r[node]-1)*(pfp**(r[node]-2))*((1-pfp)**(node.s-r[node]))-(node.s-r[node])*((1-pfp)**(node.s-r[node]-1))*(pfp**(r[node]-1)))+
+                            (the_coeff*pfn)*((r[node])*(pfp**(r[node]-1))*((1-pfp)**(node.s-r[node]-1))-(node.s-r[node]-1)*((1-pfp)**(node.s-r[node]-2))*(pfp**(r[node])))
                         )/np.exp(_lambda[node])
                     _lambda_del[node] = ((node.s*pfp-r[node])*((pfp**(r[node]-1))*((1-pfp)**(node.s-r[node]-1))))/(node.s*np.exp(_lambda[node]))
+                    _lambda_del[node] = (
+                        (-the_coeff*(pfp**(r[node]-1))*((1-pfp)**(node.s-r[node])))+
+                        (the_coeff*(pfp**(r[node]))*((1-pfp)**(node.s-r[node]-1)))
+                        )/np.exp(_lambda[node])
                 _omega[node] = _gamma[node]+np.sum([_omega[child] for child in node.children])
                 _omega_eps[node] = _gamma_eps[node]+np.sum([_omega_eps[child] for child in node.children])
                 tmp = np.zeros(len(node.children))
@@ -608,9 +621,13 @@ class OncoTree():
                 elif r[node] == node.s:
                     _lambda[node] = log_ptp+(r[node]-1)*log_pfp
                 else:
+                    if self.mut_rates is None:
+                        the_coeff = r[node]/node.s
+                    else:
+                        the_coeff = (np.sum(dataset[tumor_idx, node.genes]*self.mut_rates[node.genes]))/(np.sum(self.mut_rates[node.genes]))
                     _lambda[node] = logsumexp([
-                        np.log(r[node]/node.s)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
-                        np.log((node.s-r[node])/node.s)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
+                        np.log(the_coeff)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
+                        np.log(1-the_coeff)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
                     ])
                 _omega[node] = _gamma[node]+np.sum([_omega[child] for child in node.children])
                 tmp = np.zeros(len(node.children))
@@ -1341,9 +1358,9 @@ class OncoTree():
         }
         return(self, current_posterior, best_sample, best_posterior, posteriors_list, n_updates, details)
 
-####### ------------------------------------------- #######
-####### --- Methods not used in current version --- #######
-####### ------------------------------------------- #######
+    ####### ------------------------------------------- #######
+    ####### --- Methods not used in current version --- #######
+    ####### ------------------------------------------- #######
 
     def assign_f_values_alternative(self, dataset=None, fine_tuning=False):
 
