@@ -2,7 +2,7 @@
 
 # --------------------------------------- #
 # Example:
-# python tomexo.py -i data/HMIntogen/gdac_firehose_thym.csv -o result/HMIntogen_thym --n_chains 2 --n_mixing 2 --n_samples 2000
+# python tomexo.py -i data/HMIntogen/gdac_firehose_thym.csv -o result/HMIntogen_thym --n_chains 2 --n_mixing 2 --n_samples 2000 --pp 5
 # --------------------------------------- #
 
 import argparse
@@ -32,7 +32,7 @@ def initialize(dataset, coeff):
             single_error=False,
             error_estimation = True
             )
-    p = sample.likelihood(dataset) + sample.prior()
+    p = sample.likelihood(dataset) + sample.prior(pp)
     return(sample, p)
 
 def run_race(args):
@@ -47,7 +47,8 @@ def run_race(args):
         dataset,
         n_iters=n2,
         seed=seed,
-        current_posterior=current_posterior
+        current_posterior=current_posterior,
+        pp=pp
         )
     )
 
@@ -83,31 +84,13 @@ def fit_oncotree(dataset, print_running_status=False, include_linear_initializat
         overall_updates_array = np.concatenate((overall_updates_array, race_updates_array), axis=1)
         details_dict[_training_race] = [result_tuple[6] for result_tuple in results]
         # Initializing the next race
-        # Format of the result tuples: (sample, current_posterior, best_sample, best_posterior, posteriors_list, n_updates)
         sample_list = []
         p_list = []
-        # In previous versions, we wanted to give the currently best chain (best on their last state)
-        # ... to continue. The other chains were to pick the best sample ever encountered and continue
-        ###
-        # current_posteriors = [result_tuple[1] for result_tuple in results]
-        # bcp_idx = np.argmax(current_posteriors) # Best Current Posterior
-        # sample_list.append(deepcopy(results[bcp_idx][0]))
-        # p_list.append(deepcopy(results[bcp_idx][1]))
-        # best_posteriors = [result_tuple[3] for result_tuple in results]
-        # bop_idx = np.argmax(best_posteriors) # Best Overall Posterior
-        # for _i in range(0, n0-1):
-        #     sample_list.append(deepcopy(results[bop_idx][2]))
-        #     p_list.append(deepcopy(results[bop_idx][3]))
-        ###
-        # In the new version, we make a list of best samples encountered by individual chains, prune them,
-        # ... look at the likelihoods of the pruned trees and all chains continue from the best pruned tree
-        #best_raw_llhs = [raw_sample.likelihood(dataset)+raw_sample.prior() for raw_sample in best_raw_samples]
         best_pruned_samples = [result_tuple[2].prune(dataset) for result_tuple in results]
-        best_pruned_llhs = [pruned_sample.likelihood(dataset)+pruned_sample.prior() for pruned_sample in best_pruned_samples]
+        best_pruned_llhs = [pruned_sample.likelihood(dataset)+pruned_sample.prior(pp) for pruned_sample in best_pruned_samples]
         best_index = np.argmax(best_pruned_llhs)
         sample_list = [best_pruned_samples[best_index] for _i in range(n0)]
         p_list = [best_pruned_llhs[best_index] for _i in range(n0)]
-        # done!
         best_raw_samples.append([result_tuple[2] for result_tuple in results])
     return(best_pruned_samples[best_index], overall_posterior_array, overall_updates_array, details_dict, best_raw_samples)
 
@@ -116,7 +99,7 @@ def fit_oncotree(dataset, print_running_status=False, include_linear_initializat
 #--------------------------------------
 
 parser = argparse.ArgumentParser(
-    description='SGClone v0.5'
+    description='SGClone v0.6'
     )
 
 parser.add_argument('-i', '--input', help='input csv file')
@@ -124,6 +107,7 @@ parser.add_argument('-o', '--output', help='output directory')
 parser.add_argument('--n_chains', help='number of chains', default=10, type=int)
 parser.add_argument('--n_mixing', help='number of chain mixing events', default=0, type=int)
 parser.add_argument('--n_samples', help='number of samples between mixing events', default=100000, type=int)
+parser.add_argument('--pp', help='prior power', default=0, type=int)
 
 args = parser.parse_args()
 
@@ -132,6 +116,7 @@ n1 = args.n_mixing
 n2 = args.n_samples
 input_file = args.input
 output_folder = args.output
+pp = args.pp
 
 #--------------------------------------
 #------ Running the algorithm ---------
@@ -188,22 +173,6 @@ star_tree = OncoTree.star_from_dataset(
     error_estimation = True
     )
 
-# report += '# BEFORE FINE-TUNING the error parameters:\n'
-
-# star_llh = star_tree.likelihood(dataset)
-# report += '# Star tree log likelihood: %.4f \n' %star_llh
-# star_pri = star_tree.prior()
-# report += '# Star tree log prior: %.4f \n' %star_pri
-# report += '# Star tree log posterior: %.4f \n' %(star_pri+star_llh)
-
-# best_llh = progmo.likelihood(dataset)
-# report += '# Best sample log likelihood: %.4f \n' %best_llh
-# best_pri = progmo.prior()
-# report += '# Best sample log prior: %.4f \n' %best_pri
-# report += '# Best sample log posterior: %.4f \n' %(best_pri+best_llh)
-# report += '# Best sample epsilon: %.5f \n' %(progmo.pfp)
-# report += '# Best sample delta: %.5f \n' %(progmo.pfn)
-
 report += '# AFTER FINE-TUNING the error parameters:\n'
 
 star_tree = star_tree.assign_error_values(dataset)
@@ -211,14 +180,14 @@ star_tree = star_tree.assign_f_values(dataset, fine_tuning=True)
 star_tree, _ = star_tree.fit_error_params(dataset)
 star_llh = star_tree.likelihood(dataset)
 report += '# Star tree log likelihood: %.4f \n' %star_llh
-star_pri = star_tree.prior()
+star_pri = star_tree.prior(pp)
 report += '# Star tree log prior: %.4f \n' %star_pri
 report += '# Star tree log posterior: %.4f \n' %(star_pri+star_llh)
 
 # progmo, _ = progmo.fit_error_params(dataset)
 best_llh = progmo.likelihood(dataset)
 report += '# Best sample log likelihood: %.4f \n' %best_llh
-best_pri = progmo.prior()
+best_pri = progmo.prior(pp)
 report += '# Best sample log prior: %.4f \n' %best_pri
 report += '# Best sample log posterior: %.4f \n' %(best_pri+best_llh)
 report += '# Best sample epsilon: %.5f \n' %(progmo.pfp)

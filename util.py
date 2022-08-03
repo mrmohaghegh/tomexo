@@ -76,35 +76,38 @@ def ME_test(node, dataset):
     n = len(node.genes)
     n_tumors = dataset.shape[0]
     if n > 1:
-        mi_log_p_values = []
         me_log_p_values = []
         ME_score_values = []
-        for _idx1 in range(n-1):
-            for _idx2 in range(_idx1+1, n):
-                pair = [node.genes[_idx1], node.genes[_idx2]]
-                n_1, n_2 = np.sort([np.sum(dataset[:,pair[0]]),np.sum(dataset[:,pair[1]])])
-                f_1 = n_1/n_tumors
-                f_2 = n_2/n_tumors
-                n_p = np.sum(dataset[:,pair[0]]*dataset[:,pair[1]])
-                f_p = n_p/n_tumors
-                if n_1 == 0: # n_1 is the smaller number
-                    me_log_p = 0 # set the p_value to 1
-                    mi_log_p = 0
-                    ME_score = 1 # 0/0
-                else:
-                    log_p_i = np.zeros(n_1+1)
-                    for i in range(n_1+1):
-                        log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
-                    me_log_p = logsumexp(log_p_i[:n_p+1])
-                    mi_log_p = logsumexp(log_p_i[n_p:])
-                    ME_score = f_p/(f_1*f_2)
-                me_log_p_values.append(me_log_p)
-                mi_log_p_values.append(mi_log_p)
-                ME_score_values.append(ME_score)
+        for _idx1 in range(n):
+            for _idx2 in range(n):
+                if _idx2 != _idx1:
+                    mutated_in_1 = dataset[:,node.genes[_idx1]]
+                    mutated_in_2 = dataset[:,node.genes[_idx2]]
+                    mutated_in_both = mutated_in_1 * mutated_in_2
+                    n_1 = np.sum(mutated_in_1)
+                    n_2 = np.sum(mutated_in_2)
+                    n_both = np.sum(mutated_in_both)
+
+                    if n_1 == 0 or n_2 == 0:
+                        ME_1_to_2 = 0
+                        log_p = 0
+                    else:
+                        p_1_given_2 = n_both/n_2
+                        p_1_given_not_2 = (n_1-n_both)/(n_tumors-n_2)
+                        ME_1_to_2 = (p_1_given_not_2-p_1_given_2)/(p_1_given_not_2+p_1_given_2)
+
+                        log_p_i = []
+                        for i in range(n_both+1):
+                            log_p_i.append(
+                                log_nCr(n_1, i)+(i*np.log(n_2/n_tumors))+((n_1-i)*np.log(1-n_2/n_tumors))
+                            )
+                        log_p = logsumexp(log_p_i)
+                    ME_score_values.append(ME_1_to_2)
+                    me_log_p_values.append(log_p)
+
         overall_ME_score = np.mean(ME_score_values)       
-        MEtoMI_p_ratio = np.mean(np.exp(me_log_p_values))/np.mean(np.exp(mi_log_p_values))
         ME_p = np.mean(np.exp(me_log_p_values))
-        return(overall_ME_score, ME_p, MEtoMI_p_ratio)
+        return(overall_ME_score, ME_p)
     else:
         return()
 
@@ -117,43 +120,48 @@ def PR_test(node, dataset):
     n_tumors = dataset.shape[0]
     mutated_in_node = np.sum(dataset[:,node.genes], axis=1)>0
     mutated_in_parent = np.sum(dataset[:,node.parent.genes], axis=1)>0
-    mutated_only_in_node = mutated_in_node * (1-mutated_in_parent)
-    mutated_only_in_parent = (1-mutated_in_node) * (mutated_in_parent)
+    mutated_in_both = mutated_in_node * mutated_in_parent
 
     n_parent = np.sum(mutated_in_parent)
     n_node = np.sum(mutated_in_node)
-    n_only_node = np.sum(mutated_only_in_node)
-    n_only_parent = np.sum(mutated_only_in_parent)
+    n_both = np.sum(mutated_in_both)
+    n_only_node = n_node - n_both
+    n_only_parent = n_parent - n_both
+    n_healthy = n_tumors - n_parent - n_node + n_both
 
-    if n_node == 0:
-        PR_forward = 1
+    if n_node == 0 or n_parent == 0 or n_node == n_tumors or n_parent == n_tumors:
+        PR_forward = 0 # No Probability Raising
         log_p_forward = 0
-    else:
-        m_forward = n_tumors-n_parent
-        p_forward = n_node/n_tumors
-        log_p_i_forward = np.zeros(n_only_node+1)
-        for i in range(n_only_node+1):
-            log_p_i_forward[i] = log_nCr(m_forward, i)+(i*np.log(p_forward))+((m_forward-i)*np.log(1-p_forward))
-        log_p_forward = logsumexp(log_p_i_forward)
-        PR_forward = (n_only_node/m_forward)/(p_forward)
-
-    if n_parent == 0:
-        PR_backward = 1
+        PR_backward = 0
         log_p_backward = 0
     else:
-        m_backward = n_tumors-n_node
-        p_backward = n_parent/n_tumors
-        log_p_i_backward = np.zeros(n_only_parent+1)
-        for i in range(n_only_parent+1):
-            log_p_i_backward[i] = log_nCr(m_backward, i)+(i*np.log(p_backward))+((m_backward-i)*np.log(1-p_backward))
-        log_p_backward = logsumexp(log_p_i_backward)
-        PR_backward = (n_only_parent/m_backward)/(p_backward)
+        p_node_given_parent = n_both/n_parent
+        p_node_given_not_parent = n_only_node/(n_tumors-n_parent)
+        PR_forward = (p_node_given_parent-p_node_given_not_parent)/(p_node_given_parent+p_node_given_not_parent)
 
-    FtoB_p_ratio = np.exp(log_p_forward-log_p_backward)
+        log_p_i_forward = []
+        for i in range(n_both, n_parent+1):
+            log_p_i_forward.append(
+                log_nCr(n_parent, i)+(i*np.log(n_node/n_tumors))+((n_parent-i)*np.log(1-n_node/n_tumors))
+            )
+        log_p_forward = logsumexp(log_p_i_forward)
+
+        p_parent_given_node = n_both/n_node
+        p_parent_given_not_node = n_only_parent/(n_tumors-n_node)
+        PR_backward = (p_parent_given_node-p_parent_given_not_node)/(p_parent_given_node+p_parent_given_not_node)
+
+        log_p_i_backward = []
+        for i in range(n_both, n_node+1):
+            log_p_i_backward.append(
+                log_nCr(n_node, i)+(i*np.log(n_parent/n_tumors))+((n_node-i)*np.log(1-n_parent/n_tumors))
+            )
+        log_p_backward = logsumexp(log_p_i_backward)
+
+    score_ratio = (PR_backward+0.0001)/(PR_forward+0.0001) # will prune the edge if score_ratio>1
     F_p = np.exp(log_p_forward)
     B_p = np.exp(log_p_backward)
 
-    return(PR_forward, F_p, PR_backward, B_p, FtoB_p_ratio)
+    return(PR_forward, F_p, PR_backward, B_p, score_ratio)
 
 def Geweke(chain, first_proportion=0.1, second_proporiton=0.5, threshold=2):
     ''' The convergence is achieved if Z score is below threshold (the standard value is 2) '''
@@ -575,3 +583,92 @@ def SR_analysis(node, dataset, gene_names, log_p_th = 0):
                         'log_p': log_p
                         })
     return(ME_rep, MI_rep)
+
+def PR_test_old(node, dataset):
+    # the ratio A/B, where: (note that it's NOT in log-scale)
+    # A:    probability of this many or FEWER mutations in the tumors with
+    #       healthy parents under Null hypothesis
+    # B:    probability of this many or MORE mutations in the tumors with
+    #       healthy parents under Null hypothesis
+    n_tumors = dataset.shape[0]
+    mutated_in_node = np.sum(dataset[:,node.genes], axis=1)>0
+    mutated_in_parent = np.sum(dataset[:,node.parent.genes], axis=1)>0
+    mutated_only_in_node = mutated_in_node * (1-mutated_in_parent)
+    mutated_only_in_parent = (1-mutated_in_node) * (mutated_in_parent)
+
+    n_parent = np.sum(mutated_in_parent)
+    n_node = np.sum(mutated_in_node)
+    n_only_node = np.sum(mutated_only_in_node)
+    n_only_parent = np.sum(mutated_only_in_parent)
+
+    if n_node == 0:
+        PR_forward = 1
+        log_p_forward = 0
+    else:
+        m_forward = n_tumors-n_parent
+        p_forward = n_node/n_tumors
+        log_p_i_forward = np.zeros(n_only_node+1)
+        for i in range(n_only_node+1):
+            log_p_i_forward[i] = log_nCr(m_forward, i)+(i*np.log(p_forward))+((m_forward-i)*np.log(1-p_forward))
+        log_p_forward = logsumexp(log_p_i_forward)
+        PR_forward = (n_only_node/m_forward)/(p_forward)
+
+    if n_parent == 0:
+        PR_backward = 1
+        log_p_backward = 0
+    else:
+        m_backward = n_tumors-n_node
+        p_backward = n_parent/n_tumors
+        log_p_i_backward = np.zeros(n_only_parent+1)
+        for i in range(n_only_parent+1):
+            log_p_i_backward[i] = log_nCr(m_backward, i)+(i*np.log(p_backward))+((m_backward-i)*np.log(1-p_backward))
+        log_p_backward = logsumexp(log_p_i_backward)
+        PR_backward = (n_only_parent/m_backward)/(p_backward)
+
+    FtoB_p_ratio = np.exp(log_p_forward-log_p_backward)
+    F_p = np.exp(log_p_forward)
+    B_p = np.exp(log_p_backward)
+
+    return(PR_forward, F_p, PR_backward, B_p, FtoB_p_ratio)
+
+def ME_test_old(node, dataset):
+
+    # Averaged over pairs of genes (X,Y):
+    # Assuming n_X >= n_Y, we go over the tumors with mutated Y and calculate
+    # the ratio A/B, where:
+    # A:    probability of this many or FEWER mutations in X under Null hypothesis
+    # B:    probability of this many or MORE mutations in X under Null hypothesis
+    n = len(node.genes)
+    n_tumors = dataset.shape[0]
+    if n > 1:
+        mi_log_p_values = []
+        me_log_p_values = []
+        ME_score_values = []
+        for _idx1 in range(n-1):
+            for _idx2 in range(_idx1+1, n):
+                pair = [node.genes[_idx1], node.genes[_idx2]]
+                n_1, n_2 = np.sort([np.sum(dataset[:,pair[0]]),np.sum(dataset[:,pair[1]])])
+                f_1 = n_1/n_tumors
+                f_2 = n_2/n_tumors
+                n_p = np.sum(dataset[:,pair[0]]*dataset[:,pair[1]])
+                f_p = n_p/n_tumors
+                if n_1 == 0: # n_1 is the smaller number
+                    me_log_p = 0 # set the p_value to 1
+                    mi_log_p = 0
+                    ME_score = 1 # 0/0
+                else:
+                    log_p_i = np.zeros(n_1+1)
+                    for i in range(n_1+1):
+                        log_p_i[i] = log_nCr(n_1, i)+(i*np.log(f_2))+((n_1-i)*np.log(1-f_2))
+                    me_log_p = logsumexp(log_p_i[:n_p+1])
+                    mi_log_p = logsumexp(log_p_i[n_p:])
+                    ME_score = f_p/(f_1*f_2)
+                me_log_p_values.append(me_log_p)
+                mi_log_p_values.append(mi_log_p)
+                ME_score_values.append(ME_score)
+        overall_ME_score = np.mean(ME_score_values)       
+        MEtoMI_p_ratio = np.mean(np.exp(me_log_p_values))/np.mean(np.exp(mi_log_p_values))
+        ME_p = np.mean(np.exp(me_log_p_values))
+        return(overall_ME_score, ME_p, MEtoMI_p_ratio)
+    else:
+        return()

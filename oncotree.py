@@ -78,7 +78,10 @@ class OncoTree():
         self.pfp = pfp
         self.pfn = pfn
         self.single_error = single_error
-        self.mut_rates = mut_rates
+        if mut_rates is None:
+            self.mut_rates = np.ones(self.n_genes, dtype=int)
+        else:
+            self.mut_rates = mut_rates
 
     @classmethod
     def from_dataset(cls, dataset, coeff=0.5, passenger_threshold=0.001, pfp=0.001, pfn=0.001, single_error=False, error_estimation=False):
@@ -244,7 +247,7 @@ class OncoTree():
             pruned_tree,_=pruned_tree.fit_error_params(dataset)
         return(pruned_tree)
     
-    def prune_by_p_values(self, dataset, F2B_th=1, ME2MI_th=1, mode="into_simple_nodes"):
+    def prune_by_p_values(self, dataset, mode="into_simple_nodes"):
         # Prunes based on p-values for progression
         # modes: "into_simple_nodes", "into_passengers"
         pruned_tree = deepcopy(self)
@@ -253,8 +256,8 @@ class OncoTree():
         for node in PostOrderIter(pruned_tree.root):
             if not(node.is_root):
                 if len(node.genes)>1:
-                    _,_,ME2MI = ME_test(node, dataset)
-                    if ME2MI >= ME2MI_th:
+                    ME_score, ME_p = ME_test(node, dataset)
+                    if ME_score < 0:
                         nodes_to_remove.append(node.genes)
         for item in nodes_to_remove:
             g = item[0]
@@ -272,8 +275,8 @@ class OncoTree():
             for node in PostOrderIter(pruned_tree.root):
                 if not(node.is_root):
                     if not(node.parent.is_root):
-                        _, _, _, _, FtoB = PR_test(node, dataset)
-                        if FtoB >= F2B_th:
+                        PR_forward, _, _, _, BtoF = PR_test(node, dataset)
+                        if BtoF > 1 or PR_forward < 0:
                             nodes_to_remove.append(node.genes)
             if len(nodes_to_remove)>0:
                 change_happend = True
@@ -292,7 +295,7 @@ class OncoTree():
         if node is None:
             node = self.root
         if len(node.genes)>0:
-            mut_set = [np.random.choice(node.genes)]
+            mut_set = [np.random.choice(node.genes, p=self.mut_rates[node.genes]/(np.sum(self.mut_rates[node.genes])))]
         else:
             mut_set = []
         for child in node.children:
@@ -314,14 +317,67 @@ class OncoTree():
                     dataset[i,j] = bool(np.random.binomial(1, self.pfp))
         return(dataset, clean_dataset)
 
+    def plot_single_tumor(self, the_row, gene_names=None, dot_file='tmp.dot', fig_file='tmp.png'):
+        driver_nodes = [self.root]
+        driver_nodes.extend([node for node in self.root.descendants])
+        if gene_names is None:
+            gene_names= ['g%i'%tmp_i for tmp_i in range(self.n_genes)]
+        txt = 'digraph tree {\n'
+        for i, node in enumerate(driver_nodes):
+            genes_list = ','.join(gene_names[tmp_i] for tmp_i in node.genes)
+            if len(node.genes)==0:
+                label = '< >'
+                txt += '    Node%i [label=%s, peripheries=1, shape=circle, style=filled, fillcolor=grey34];\n'%(i, label)
+            else:
+                n_muts = np.sum([the_row[_tri] for _tri in node.genes])
+                if n_muts==0:
+                    fillcolor = 'grey95'
+                elif n_muts==1:
+                    fillcolor = 'limegreen'                    
+                else:
+                    fillcolor = 'lightcoral'
+                bordercolor = 'black'
+                peripheries = 1
+                label = '<%s>'%(genes_list)
+                txt += '    Node%i [label=%s, peripheries=%i, shape=box, style=\"rounded, filled\", fillcolor=%s, color=%s];\n'%(i, label, peripheries, fillcolor, bordercolor)
+        # plotting the set of passengers
+        genes_list = ','.join(gene_names[tmp_i] for tmp_i in self.ps.genes)
+        n_muts = np.sum([the_row[_tri] for _tri in self.ps.genes])
+        if n_muts>0:
+            fillcolor = 'lightcoral'
+        else:
+            fillcolor='grey76'
+        txt += '    PS [label=<%s>][shape=box, peripheries=1, style=\"rounded, filled\", fillcolor=%s];\n'%(genes_list, fillcolor)
+        for i, node in enumerate(driver_nodes):
+            if node.is_root:
+                for child in node.children:
+                    j = driver_nodes.index(child)
+                    txt += '    Node%i -> Node%i [label=< >];\n' %(i, j)
+            else:
+                for child in node.children:
+                    j = driver_nodes.index(child)
+                    #PR_score, PR_p = PR_test(child, dataset)
+                    arrow_color = 'black'
+                    label = '< >'
+                    txt += '    Node%i -> Node%i [style=solid, color=%s, label=%s];\n' %(i, j, arrow_color, label)
+
+        txt += '}'
+        with open(dot_file, 'w') as f:
+            f.write(txt)
+        if fig_file.endswith('.pdf'):
+            check_call(['dot','-Tpdf',dot_file,'-o',fig_file])
+        else:
+            check_call(['dot','-Tpng',dot_file,'-o',fig_file])
+        return(txt)
+
     def to_dot(self, dataset, gene_names=None, dot_file='tmp.dot', fig_file='tmp.png', show_passengers=False, plot_reverse_edges=False):
         driver_nodes = [self.root]
         driver_nodes.extend([node for node in self.root.descendants])
         if gene_names is None:
-            gene_names= ['g%i'%i for i in range(self.n_genes)]
+            gene_names= ['g%i'%tmp_i for tmp_i in range(self.n_genes)]
         txt = 'digraph tree {\n'
         for i, node in enumerate(driver_nodes):
-            genes_list = ','.join(gene_names[i] for i in node.genes)
+            genes_list = ','.join(gene_names[tmp_i] for tmp_i in node.genes)
             if len(genes_list)==0:
                 label = '< >'
                 txt += '    Node%i [label=%s, peripheries=1, shape=circle, style=filled, fillcolor=grey34];\n'%(i, label)
@@ -329,10 +385,12 @@ class OncoTree():
                 label = '<%s>'%genes_list
                 txt += '    Node%i [label=%s, peripheries=1, shape=box, style=\"rounded, filled\", fillcolor=grey95, color=black];\n'%(i, label)
             else:
-                ME_score, ME_p, ME2MI = ME_test(node, dataset)
-                if ME_p<0.1: # significant mutual exclusivity!
-                    fillcolor = 'mistyrose'
-                    bordercolor = 'red'
+                ME_score, ME_p = ME_test(node, dataset)
+                if ME_p<0.01: # significant mutual exclusivity!
+                    #fillcolor = 'mistyrose'
+                    fillcolor = 'grey95'
+                    #bordercolor = 'red'
+                    bordercolor = 'black'
                 else:
                     fillcolor = 'grey95'
                     bordercolor = 'black'
@@ -344,7 +402,7 @@ class OncoTree():
                 label = '<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'ForestGreen\' POINT-SIZE=\'12\'> (%.2e) </font>>'%(genes_list,ME_score,ME_p)
                 txt += '    Node%i [label=%s, peripheries=%i, shape=box, style=\"rounded, filled\", fillcolor=%s, color=%s];\n'%(i, label, peripheries, fillcolor, bordercolor)
         if (show_passengers and len(self.ps.genes)>0):
-            genes_list = ','.join(gene_names[i] for i in self.ps.genes)
+            genes_list = ','.join(gene_names[tmp_i] for tmp_i in self.ps.genes)
             txt += '    PS [label=<%s>][shape=box, peripheries=1, style=\"rounded, filled\", fillcolor=grey76];\n'%(genes_list)
         for i, node in enumerate(driver_nodes):
             if node.is_root or np.sum(np.sum(dataset[:,node.genes], axis=1)>0)==dataset.shape[0]:
@@ -356,8 +414,9 @@ class OncoTree():
                     j = driver_nodes.index(child)
                     #PR_score, PR_p = PR_test(child, dataset)
                     PR_forward, F_p, PR_backward, B_p, FtoB_p_ratio = PR_test(child, dataset)
-                    if F_p < 0.1:
-                        arrow_c = 'red'
+                    if F_p < 0.01:
+                        arrow_c = 'black'
+                        #arrow_c = 'red'
                     else:
                         arrow_c = 'black'
                     if perfect_PR(child, dataset):
@@ -413,12 +472,17 @@ class OncoTree():
             n_errors += w_1[self.root] + np.array([np.sum(dataset[tumor_idx, self.ps.genes]), 0])
         n_ones = np.sum(dataset)
         n_zeros = np.size(dataset)-n_ones
-        epsilon_hat = (n_errors[0]+constant_to_be_added)/(n_zeros-n_errors[1]+n_errors[0]+constant_to_be_added)
-        delta_hat = (n_errors[1]+constant_to_be_added)/(n_ones-n_errors[0]+n_errors[1]+constant_to_be_added)
-        e_hat = (n_errors[0]+n_errors[1]+constant_to_be_added)/(n_ones+n_zeros+constant_to_be_added)
+        epsilon_hat = (n_errors[0]+constant_to_be_added)/(n_zeros-n_errors[1]+n_errors[0]+2*constant_to_be_added)
+        delta_hat = (n_errors[1]+constant_to_be_added)/(n_ones-n_errors[0]+n_errors[1]+2*constant_to_be_added)
+        e_hat = (n_errors[0]+n_errors[1]+constant_to_be_added)/(n_ones+n_zeros+2*constant_to_be_added)
         if epsilon_hat > 0.5 or delta_hat > 0.5:
-            print('n_fp and n_fn are:')
-            print(n_errors)
+            # print(len(self.ps.genes))
+            # print(len(self.nodes))
+            # print('dataset shape is :')
+            # print(dataset.shape)
+            # print('with %i zeros and %i ones'%(n_zeros, n_ones))
+            # print('epsilon: %.4f -- delta: %.4f'%(epsilon_hat,delta_hat))
+            # print('n_fp: %i and n_fn: %i'%(n_errors[0], n_errors[1]))
             epsilon_hat = 0.49
             delta_hat = 0.49
             e_hat = 0.49
@@ -477,12 +541,23 @@ class OncoTree():
                 node.f = np.max([node.f, lowerbound])
         return(self)
 
-    def prior(self, uniform=True):
+    def prior(self, power=0):
+        # power = 0 : Uniform prior
+        # power = 1 : Prior proportional to 1/(number of possible b*'s)
         p = 0
-        if not uniform:
-            for node in self.nodes:
-                if not(node.is_ps):
-                    p += -np.log(len(node.genes)+1)
+        if power != 0:
+            # for node in self.nodes:
+            #     if not(node.is_ps):
+            #         p += -np.log(len(node.genes)+1)
+            v = {}
+            for node in PostOrderIter(self.root):
+                if not node.is_root:
+                    v[node] = np.log(len(node.genes))
+                else:
+                    v[node] = 0
+                for child in node.children:
+                    v[node] += logsumexp([v[child], 0])
+            p = -v[self.root]*power
         return(p)
 
     def fit_error_params(self, dataset):
@@ -547,22 +622,22 @@ class OncoTree():
                     _lambda_eps[node] = (r[node]-1)/pfp - (node.s-r[node])/(1-pfp)
                     _lambda_del[node] = -1/(1-pfn)
                 else:
-                    if self.mut_rates is None:
-                        the_coeff = r[node]/node.s
+                    the_coeff = (np.sum(dataset[tumor_idx, node.genes]*self.mut_rates[node.genes]))/(np.sum(self.mut_rates[node.genes]))
+                    if the_coeff < 1: # to prevent numerical issues when the coeff is one
+                        _lambda[node] = logsumexp([
+                            np.log(the_coeff)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
+                            np.log(1-the_coeff)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
+                        ])
                     else:
-                        the_coeff = (np.sum(dataset[tumor_idx, node.genes]*self.mut_rates[node.genes]))/(np.sum(self.mut_rates[node.genes]))
-                    _lambda[node] = logsumexp([
-                        np.log(the_coeff)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
-                        np.log(1-the_coeff)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
-                    ])
+                        _lambda[node] = log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn
                     _lambda_eps[node] = (
                             (the_coeff*(1-pfn))*((r[node]-1)*(pfp**(r[node]-2))*((1-pfp)**(node.s-r[node]))-(node.s-r[node])*((1-pfp)**(node.s-r[node]-1))*(pfp**(r[node]-1)))+
-                            (the_coeff*pfn)*((r[node])*(pfp**(r[node]-1))*((1-pfp)**(node.s-r[node]-1))-(node.s-r[node]-1)*((1-pfp)**(node.s-r[node]-2))*(pfp**(r[node])))
+                            ((1-the_coeff)*pfn)*((r[node])*(pfp**(r[node]-1))*((1-pfp)**(node.s-r[node]-1))-(node.s-r[node]-1)*((1-pfp)**(node.s-r[node]-2))*(pfp**(r[node])))
                         )/np.exp(_lambda[node])
                     _lambda_del[node] = ((node.s*pfp-r[node])*((pfp**(r[node]-1))*((1-pfp)**(node.s-r[node]-1))))/(node.s*np.exp(_lambda[node]))
                     _lambda_del[node] = (
                         (-the_coeff*(pfp**(r[node]-1))*((1-pfp)**(node.s-r[node])))+
-                        (the_coeff*(pfp**(r[node]))*((1-pfp)**(node.s-r[node]-1)))
+                        ((1-the_coeff)*(pfp**(r[node]))*((1-pfp)**(node.s-r[node]-1)))
                         )/np.exp(_lambda[node])
                 _omega[node] = _gamma[node]+np.sum([_omega[child] for child in node.children])
                 _omega_eps[node] = _gamma_eps[node]+np.sum([_omega_eps[child] for child in node.children])
@@ -625,10 +700,13 @@ class OncoTree():
                         the_coeff = r[node]/node.s
                     else:
                         the_coeff = (np.sum(dataset[tumor_idx, node.genes]*self.mut_rates[node.genes]))/(np.sum(self.mut_rates[node.genes]))
-                    _lambda[node] = logsumexp([
-                        np.log(the_coeff)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
-                        np.log(1-the_coeff)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
-                    ])
+                    if the_coeff < 1: # to prevent numerical issues when the coeff is one
+                        _lambda[node] = logsumexp([
+                            np.log(the_coeff)+log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn,
+                            np.log(1-the_coeff)+log_pfn+r[node]*log_pfp+(node.s-r[node]-1)*log_ptn
+                        ])
+                    else:
+                        _lambda[node] = log_ptp+(r[node]-1)*log_pfp+(node.s-r[node])*log_ptn
                 _omega[node] = _gamma[node]+np.sum([_omega[child] for child in node.children])
                 tmp = np.zeros(len(node.children))
                 for i, child in enumerate(node.children):
@@ -649,7 +727,7 @@ class OncoTree():
                 llh += _psi[self.ps]
         return(llh)
 
-    def sample_structure(self, dataset, p_moves, log_p_moves, current_posterior, error_estimation=True):
+    def sample_structure(self, dataset, p_moves, log_p_moves, current_posterior, pp, error_estimation=True):
         accepted_proposal = False
         new_posterior = current_posterior
         move_type = np.random.choice(list(p_moves.keys()), p=list(p_moves.values()))
@@ -709,7 +787,7 @@ class OncoTree():
             print('UNDEFINED MOVE!')
         
         if novel_proposal:
-            proposal_posterior = proposal.likelihood(dataset) + proposal.prior()
+            proposal_posterior = proposal.likelihood(dataset) + proposal.prior(pp)
             ar = proposal_posterior-current_posterior-forward_prob+backward_prob
             if np.random.binomial(n=1, p=np.exp(np.min([0,ar]))):
                 self=proposal
@@ -1293,7 +1371,7 @@ class OncoTree():
             novel_proposal = True
         return(proposal, forward_prob, backward_prob, novel_proposal)
 
-    def fast_training_iteration(self, dataset, n_iters, seed=None, current_posterior=None, p_moves=None, collapse_interval=10000):
+    def fast_training_iteration(self, dataset, n_iters, pp, seed=None, current_posterior=None, p_moves=None, collapse_interval=10000):
         # hardcoding to collapse every 1000 samples
         # if n_iters is divisable by 1000, the output will be already pruned
         collapse_interval = collapse_interval
@@ -1322,7 +1400,7 @@ class OncoTree():
                 p_moves[k] = p_moves[k]*factor
         log_p_moves = {k: np.log(v) for k, v in p_moves.items() if v>0}
         if current_posterior is None:
-            current_posterior = self.likelihood(dataset)+self.prior()
+            current_posterior = self.likelihood(dataset)+self.prior(pp)
         # To record move-specific stats #
         n_proposed = {k: 0 for k, _ in p_moves.items()}
         n_novel = {k: 0 for k, _ in p_moves.items()}
@@ -1336,9 +1414,9 @@ class OncoTree():
             if (_iter+1) % collapse_interval == 0: # special iteration!
                 # collapsing the tree
                 self = self.prune(dataset)
-                new_posterior = self.likelihood(dataset) + self.prior()
+                new_posterior = self.likelihood(dataset) + self.prior(pp)
             else: # normal iteration
-                self, new_posterior, move_type, novel_proposal, accepted_proposal = self.sample_structure(dataset, p_moves, log_p_moves, current_posterior)
+                self, new_posterior, move_type, novel_proposal, accepted_proposal = self.sample_structure(dataset, p_moves, log_p_moves, current_posterior, pp)
                 n_proposed[move_type] += 1
                 if novel_proposal:
                     n_novel[move_type] += 1
@@ -1357,182 +1435,3 @@ class OncoTree():
             'n_accepted': n_accepted
         }
         return(self, current_posterior, best_sample, best_posterior, posteriors_list, n_updates, details)
-
-    ####### ------------------------------------------- #######
-    ####### --- Methods not used in current version --- #######
-    ####### ------------------------------------------- #######
-
-    def assign_f_values_alternative(self, dataset=None, fine_tuning=False):
-
-        if fine_tuning:
-            upperbound = 0.9999
-            lowerbound = 0.0001
-        else:
-            upperbound = 0.95
-            lowerbound = 0.05
-        
-        if dataset is None:
-            for node in PostOrderIter(self.root):
-                if node.is_root:
-                    node.f = 1
-                else:
-                    tmp = 1
-                    for child in node.children:
-                        tmp *= 1-child.f
-                    node.f = 1/(1+tmp)
-                node.f = np.min([node.f, upperbound])
-                node.f = np.max([node.f, lowerbound])
-        else:
-            n_tumors = dataset.shape[0]
-            for node in PostOrderIter(self.root):
-                if node.is_root:
-                    node.f = 1
-                elif node.parent.is_root:
-                    n_p = n_tumors
-                    n_u_p = np.sum(np.sum(dataset[:,node.genes], axis=1)>0)
-                    node.f = np.max((n_u_p-self.pfp*n_p)/(n_p*(1-self.pfp-self.pfn)), 0)
-                else:
-                    n_p = np.sum(
-                        np.sum(dataset[:,node.parent.genes], axis=1)>0
-                    )
-                    if n_p == 0:
-                        node.f = 0
-                    else:
-                        n_u_p = np.sum(
-                            (np.sum(dataset[:,node.genes], axis=1)>0)
-                        )
-                        node.f = np.max((n_u_p-self.pfp*n_p)/(n_p*(1-self.pfp-self.pfn)), 0)
-                node.f = np.min([node.f, upperbound])
-                node.f = np.max([node.f, lowerbound])
-        return(self)
-
-    def prune_by_mut_freqs_smoothly(self, dataset, th_f=0.01):
-        # NOT tested / NOT used
-
-        change_occured = True
-        pruned_tree = deepcopy(self)
-
-        while change_occured:
-            change_occured = False
-            pruned_tree = pruned_tree.assign_error_values(dataset)
-            pruned_tree = pruned_tree.assign_f_values(dataset, fine_tuning=True)
-            pruned_tree,_=pruned_tree.fit_error_params(dataset)
-            th_p = pruned_tree.pfp
-            for node in PostOrderIter(pruned_tree.root):
-                if node.f <= th_f:
-                    change_occured = True
-                    break
-                elif not(node.is_root):
-                    total_f = 1
-                    for anc_node in node.ancestors:
-                        total_f *= anc_node.f
-                    total_f *= node.f
-                    total_f *= (1/len(node.genes))
-                    if total_f <= th_p:
-                        change_occured = True
-                        break
-                else:
-                    continue
-            if change_occured:
-                # we want to take care of the node
-                if node.parent.is_root:
-                    if len(node.genes)>1:
-                        for child_node in node.children:
-                            pruned_tree = pruned_tree.remove_subtree(child_node, mode="spr_into_grandparent")
-                        pruned_tree = pruned_tree.remove_subtree(node, mode="break_leaf")
-                    else:
-                        pruned_tree = pruned_tree.remove_subtree(node, mode="into_passengers")
-                else:
-                    try_again = True
-                    while try_again:
-                        try_again = False
-                        key_gene = node.genes[0]
-                        if not(node.parent.is_root):
-                            pruned_tree = pruned_tree.remove_subtree(node, mode="spr_into_grandparent")
-                            for _i, _n in enumerate(pruned_tree.nodes):
-                                if key_gene in _n.genes:
-                                    the_node = _n
-                                    break
-                            _,_,_,_,F2B = PR_test(the_node, dataset)
-                            if F2B >= 1:
-                                node = the_node
-                                try_again = True
-                        else:
-                            if len(node.genes)>1:
-                                for child_node in node.children:
-                                    pruned_tree = pruned_tree.remove_subtree(child_node, mode="spr_into_grandparent")
-                                pruned_tree = pruned_tree.remove_subtree(node, mode="break_leaf")
-                            else:
-                                pruned_tree = pruned_tree.remove_subtree(node, mode="into_passengers")
-        pruned_tree = pruned_tree.assign_error_values(dataset)
-        pruned_tree = pruned_tree.assign_f_values(dataset, fine_tuning=True)
-        pruned_tree,_=pruned_tree.fit_error_params(dataset)
-        return(pruned_tree)
-
-    def show_graph(self, filename="tmp.png", gene_names=None):
-        edgeattrfunc = lambda parent, child: "style=bold,label=%.2f" % (child.f or 0)
-        if gene_names is None:
-            nodenamefunc = lambda node:node.genes
-        else:
-            nodenamefunc = lambda node:' , '.join([gene_names[i] for i in node.genes])
-        DotExporter(self.root,
-                    edgeattrfunc=edgeattrfunc,
-                    nodenamefunc=nodenamefunc
-                ).to_picture(filename)
-        return(Image(filename))
-
-    # def to_dot_compressed(self, dataset, gene_names=None, dot_file='tmp.dot', fig_file='tmp.png', show_passengers=False):
-    #     driver_tree_nodes = [self.root]
-    #     driver_tree_nodes.extend([node for node in self.root.descendants if not(node.is_simple)])
-    #     simple_node_genes = [node.genes[0] for node in self.root.children if node.is_simple]
-    #     if gene_names is None:
-    #         gene_names= ['g%i'%i for i in range(self.n_genes)]
-    #     txt = 'digraph tree {\n'
-    #     for i, node in enumerate(driver_tree_nodes):
-    #         genes_list = ','.join(gene_names[i] for i in node.genes)
-    #         if len(genes_list)==0:
-    #             genes_list = ' '
-    #             txt += '    Node%i [label=<%s>, shape=circle];\n'%(i, genes_list)
-    #         elif len(node.genes)>1:
-    #             #_, ME_score, ME_p = ME_test(node, dataset, gene_names, mode=mode)
-    #             ME_score,_ = ME_test(node, dataset)
-    #             #if mode == 'classic':
-    #                 #txt += '    Node%i [label=<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'Red\' POINT-SIZE=\'12\'> (%.2e) </font>>, shape=box];\n'%(i, genes_list, ME_score, ME_p)
-    #             #txt += '    Node%i [label=<%s<br/><br/> <font color=\'Blue\'>ME_score:%.2f</font> ----- <font color=\'Red\'> p:%.2e</font>>];\n'%(i, genes_list, ME_score, ME_p)
-    #             #elif mode == 'new':
-    #             txt += '    Node%i [label=<%s<br/><font color=\'Blue\' POINT-SIZE=\'12\'> %.2e </font>>, shape=box];\n'%(i, genes_list, ME_score)
-    #         else:
-    #             txt += '    Node%i [label=<%s>, shape=box];\n'%(i, genes_list)
-    #     if (show_passengers and len(self.ps.genes)>0):
-    #         genes_list = ','.join(gene_names[i] for i in self.ps.genes)
-    #         #txt += '    PS [label=<<font POINT-SIZE=\'12\'>Passengers:</font><br/><br/>%s>][shape=box];\n'%(genes_list)
-    #         txt += '    PS [label=<%s>][shape=oval];\n'%(genes_list)
-    #     if len(simple_node_genes)>0:
-    #         genes_list = ','.join(gene_names[i] for i in simple_node_genes)
-    #         txt += '    Simples [label=<%s>, shape=box];\n'%(genes_list)
-    #         txt += '    Node0 -> Simples [style=bold, label=<>];\n'
-    #     for i, node in enumerate(driver_tree_nodes):
-    #         if node.is_root or np.sum(np.sum(dataset[:,node.genes], axis=1)>0)==dataset.shape[0]:
-    #             for child in node.children:
-    #                 if not(child.is_simple):
-    #                     j = driver_tree_nodes.index(child)
-    #                     txt += '    Node%i -> Node%i [style=bold, label=< %.2f >];\n' %(i, j, child.f)
-    #         else:
-    #             for child in node.children:
-    #                 j = driver_tree_nodes.index(child)
-    #                 #PR_score, PR_p = PR_test(child, dataset, gene_names, mode=mode)
-    #                 PR_score,_ = PR_test(child, dataset)
-    #                 #if mode=='classic':
-    #                     #txt += '    Node%i -> Node%i [style=bold, label=< %.2f <br/> <font color=\'ForestGreen\' POINT-SIZE=\'12\'> %.2f </font><br/><font color=\'Red\' POINT-SIZE=\'12\'> (%.2e) </font>>];\n' %(i, j, child.f, PR_score, PR_p)
-    #                 #txt += '    Node%i -> Node%i [style=bold, label=<%.2f<br/><br/> <font color=\'ForestGreen\'>PR_score:%.2f</font><br/><font color=\'Red\'>p:%.2e</font>>];\n' %(i, j, child.f, PR_score, PR_p)
-    #                 #elif mode=='new':
-    #                 txt += '    Node%i -> Node%i [style=bold, label=< %.2f <br/> <font color=\'ForestGreen\' POINT-SIZE=\'12\'> %.2e </font>>];\n' %(i, j, child.f, PR_score)
-
-    #     txt += '}'
-    #     with open(dot_file, 'w') as f:
-    #         f.write(txt)
-    #     if fig_file.endswith('.pdf'):
-    #         check_call(['dot','-Tpdf',dot_file,'-o',fig_file])
-    #     else:
-    #         check_call(['dot','-Tpng',dot_file,'-o',fig_file])
-    #     return(txt)
