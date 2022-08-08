@@ -49,6 +49,7 @@ nodes_dict['mixture'] = [root, c0, c1, c2, c1_1, c1_2, c2_1, c2_1_1, ps]
 
 n_list = [50, 100, 200, 500]
 e_list = [0.001, 0.01, 0.05, 0.1]
+n_dataset_per_setting = 10
 
 if 'synthetic' not in os.listdir('data'):
     os.mkdir('data/synthetic')
@@ -65,25 +66,26 @@ for mode in ['linear', 'tree', 'mixture']:
         with open(pkl_file, 'wb') as f:
             pickle.dump(gen_progmo, f)
         for n in n_list:
-            df_file = 'data/synthetic/{}/{}-{}.csv'.format(mode, n, e)
-            dataset, _ =gen_progmo.draw_sample(n)
-            tumor_ids = ['tumor{}'.format(i) for i in range(n)]
-            df = pd.DataFrame(data=np.array(dataset, dtype=int), columns=gene_names, index=tumor_ids)
-            ## Comment lines for csv file:
-            comment = '# Synthetic dataset  \n'
-            comment += '# Number of tumors: %i \n' % n
-            comment += '# Number of mutations: %i \n' % gen_progmo.n_genes
-            comment += '# driver tree: \n'
-            for pre, fill, node in RenderTree(gen_progmo.root):
-                comment += '# %s%s\n' % (pre, node.genes)
-            comment += '# set of passengers: \n'
-            for pre, fill, node in RenderTree(gen_progmo.ps):
-                comment += '# %s%s\n' % (pre, node.genes)
-            comment += '# p(FP): %.4f \n' % e
-            comment += '# p(FN): %.4f \n' % e
-            comment += '# ------------------------------------ #\n'
-            with open(df_file, 'w') as f:
-                f.write(comment)
-            ## Done with comments
-            with open(df_file, 'a') as f:          
-                df.to_csv(f, sep=',')
+            for idx in range(n_dataset_per_setting):
+                df_file = 'data/synthetic/{}/{}-{}-{}.csv'.format(mode, n, e, idx)
+                dataset, _ =gen_progmo.draw_sample(n)
+                tumor_ids = ['tumor{}'.format(i) for i in range(n)]
+                df = pd.DataFrame(data=np.array(dataset, dtype=int), columns=gene_names, index=tumor_ids)
+                ## Comment lines for csv file:
+                comment = '# Synthetic dataset number %i  \n' % idx
+                comment += '# Number of tumors: %i \n' % n
+                comment += '# Number of mutations: %i \n' % gen_progmo.n_genes
+                comment += '# driver tree: \n'
+                for pre, fill, node in RenderTree(gen_progmo.root):
+                    comment += '# %s%s\n' % (pre, node.genes)
+                comment += '# set of passengers: \n'
+                for pre, fill, node in RenderTree(gen_progmo.ps):
+                    comment += '# %s%s\n' % (pre, node.genes)
+                comment += '# p(FP): %.4f \n' % e
+                comment += '# p(FN): %.4f \n' % e
+                comment += '# ------------------------------------ #\n'
+                with open(df_file, 'w') as f:
+                    f.write(comment)
+                ## Done with comments
+                with open(df_file, 'a') as f:          
+                    df.to_csv(f, sep=',')

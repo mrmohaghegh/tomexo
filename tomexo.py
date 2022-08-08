@@ -1,5 +1,12 @@
 #! /usr/bin/env python3
 
+### -------------------------------------------- ###
+### -------------------------------------------- ###
+### ----------------ToMExO v0.6----------------- ###
+### -------------------------------------------- ###
+### -------------------------------------------- ###
+
+
 # --------------------------------------- #
 # Example:
 # python tomexo.py -i data/HMIntogen/gdac_firehose_thym.csv -o result/HMIntogen_thym --n_chains 2 --n_mixing 2 --n_samples 2000 --pp 5
@@ -99,7 +106,7 @@ def fit_oncotree(dataset, print_running_status=False, include_linear_initializat
 #--------------------------------------
 
 parser = argparse.ArgumentParser(
-    description='SGClone v0.6'
+    description='ToMExO v0.6'
     )
 
 parser.add_argument('-i', '--input', help='input csv file')
@@ -107,7 +114,7 @@ parser.add_argument('-o', '--output', help='output directory')
 parser.add_argument('--n_chains', help='number of chains', default=10, type=int)
 parser.add_argument('--n_mixing', help='number of chain mixing events', default=0, type=int)
 parser.add_argument('--n_samples', help='number of samples between mixing events', default=100000, type=int)
-parser.add_argument('--pp', help='prior power', default=0, type=int)
+parser.add_argument('--pp', help='prior power', default=5, type=int)
 
 args = parser.parse_args()
 

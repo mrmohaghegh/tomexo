@@ -7,7 +7,7 @@ The notebook demo.ipynb provides a comprehenisve illustration of various structu
 
 ## Synthetic data experimments
 
-The experiments can be reproduced using syn_datagen.py and syn_analysis.py
+The experiments can be reproduced using syn_datagen.py and syn_postproc.ipynb
 
 ## Biological data analysis
 
@@ -21,12 +21,13 @@ Use gdac_preproc.py to prepare the input csv file for the algorithm.
 
 ### How to run
 ```
-$ python tomexo.py -i input.csv -o output --n_chains 10 --n_mixing 5 --n_samples 100
+$ python tomexo.py -i input.csv -o output --n_chains 10 --n_mixing 5 --n_samples 100 --pp 5
 ```
 
 * n_chains default is 10
 * n_mixing default is 0
 * n_samples default is 100000
+* pp is the prior's power variable, with default value of 5
 
 ### Perprocessing
 
